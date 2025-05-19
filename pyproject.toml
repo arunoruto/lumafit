@@ -1,7 +1,47 @@
 [project]
-name = "python-nix"
+name = "lumafit"
 version = "0.1.0"
-description = "Add your description here"
+description = "A Numba-accelerated Levenberg-Marquardt fitting library"
 readme = "README.md"
+authors = [{ name = "Mirza Arnaut", email = "mirza.arnaut@tu-dortmund.de" }]
+license = { text = "MIT" }
+keywords = [
+  "levenberg-marquardt",
+  "numba",
+  "optimization",
+  "fitting",
+  "least-squares",
+  "scientific",
+]
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["numpy>=2.2.5", "numba>=0.61.0", "scipy>=1.15.3"]
+
+[dependency-groups]
+test = [
+    "pytest>=8.3.3",
+    "pytest-cov>=6.1.1",
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+# addopts = "-ra -q"
+log_cli = true
+log_level = "INFO"
+log_format = "%(asctime)s - %(name)-8s - %(levelname)s - %(message)s"
+log_date_format = "%Y-%m-%d %H:%M:%S"
+testpaths = ["tests"]
+
+# [build-system]
+# requires = ["hatchling"]
+# build-backend = "hatchling.build"
+[build-system]
+requires = ["setuptools>=61.0", "wheel"] # Standard build tools
+build-backend = "setuptools.build_meta"
+backend-path = "."                       # Tells setuptools to look for setup.cfg or setup.py if needed
+
+[semantic_release]
+version_variable = ["lumafit/__init__.py:__version__"]
+version_toml = ["pyproject.toml:project.version:nf"]
+major_on_zero = false
+branch = "main"
+build_command = "curl -LsSf https://astral.sh/uv/install.sh | sh && source $HOME/.local/bin/env && uv build"
