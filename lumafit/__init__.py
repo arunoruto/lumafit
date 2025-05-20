@@ -14,6 +14,8 @@ import numpy as np
 import numpy.typing as npt
 from numba import jit, prange
 
+__version__ = "0.1.0"
+
 # Define epsilon near machine precision for numerical stability
 _EPS = np.finfo(float).eps
 
@@ -109,8 +111,128 @@ def levenberg_marquardt_core(
     use_marquardt_damping: bool = True,
     jac_func: JacobianFunc | None = None,
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], float, int, bool]:
-    """Core Levenberg-Marquardt algorithm for non-linear least squares.
-    # ... (docstring) ...
+    """
+    Core Levenberg-Marquardt algorithm for non-linear least squares curve fitting.
+
+    Implements the standard Levenberg-Marquardt optimization method to find the
+    parameters `p` that minimize the sum of squared weighted residuals:
+    `sum(weights * (y_dat - func(t, p))**2)`.
+
+    Supports optional weighting and uses a damping strategy (Marquardt-style
+    diagonal scaling or Levenberg-style identity matrix scaling). It can utilize
+    an analytical Jacobian function if provided, falling back to a
+    Numba-accelerated finite difference calculation otherwise.
+
+    This is the core, single-curve fitting routine designed to be JIT compiled
+    for performance and used by higher-level functions like
+    :func:`levenberg_marquardt_pixelwise`.
+
+    Parameters
+    ----------
+    func : callable
+        The model function `y_hat = func(t, p)`. It must be a Numba JIT-compilable
+        function that accepts a 1D array `t` (independent variable) and a 1D
+        array `p` (parameters), and returns a 1D array `y_hat` (model output)
+        of the same length as `t`.
+    t : numpy.ndarray
+        Independent variable data (m-element 1D array, float64 dtype).
+    y_dat : numpy.ndarray
+        Dependent variable (experimental) data (m-element 1D array, float64 dtype).
+    p0 : numpy.ndarray
+        Initial guess for the parameters `p` (n-element 1D array, float64 dtype).
+    max_iter : int, default=100
+        Maximum number of iterations for the optimization loop.
+    tol_g : float, default=1e-8
+        Convergence tolerance on the maximum absolute component of the weighted
+        gradient `J^T W dy`. If the maximum absolute gradient is less than this
+        value, the algorithm is considered converged.
+    tol_p : float, default=1e-8
+        Convergence tolerance on the relative change in the parameter vector
+        between successive accepted steps. Convergence is met if the maximum
+        relative step `|dp[i]| / (|p_try[i]| + EPS)` is less than this value
+        for all parameters.
+    tol_c : float, default=1e-8
+        Convergence tolerance on the relative change in the weighted Chi-squared
+        value between successive accepted steps. Convergence is met if
+        `(Chi2_prev - Chi2_current) / Chi2_prev` is less than this value
+        (for Chi2_prev > EPS).
+    lambda_0_factor : float, default=1e-2
+        Initial scaling factor for the damping parameter `lambda`. The initial
+        `lambda` is typically set based on this factor and the diagonal of
+        `J^T W J`.
+    lambda_up_factor : float, default=3.0
+        Factor by which the damping parameter `lambda` is increased when a
+        trial step is rejected (i.e., increases Chi-squared).
+    lambda_down_factor : float, default=2.0
+        Factor by which the damping parameter `lambda` is decreased when an
+        accepted step results in a reduction in Chi-squared.
+    dp_ratio : float, default=1e-8
+        Fractional increment base used for calculating the finite difference
+        Jacobian if `jac_func` is None. The step size for parameter `p[j]`
+        is `dp_ratio * (1 + abs(p[j]))`.
+    weights : numpy.ndarray or None, optional, default=None
+        Weights array (m-element 1D array, float64 dtype). The algorithm
+        minimizes the sum of weighted squared residuals `sum(weights * (y_dat - func(t, p))**2)`.
+        If None, uniform weights of 1.0 are used. Must be Numba compatible.
+    use_marquardt_damping : bool, optional, default=True
+        If True, the Marquardt damping scheme is used where `lambda` scales
+        the diagonal elements of `J^T W J`. If False, the Levenberg scheme is used
+        where `lambda` scales the identity matrix, adding `lambda` to the diagonal.
+        Marquardt damping is often preferred as it is scale-invariant with respect
+        to parameter scaling.
+    jac_func : callable or None, optional, default=None
+        Analytical Jacobian function `J = jac_func(t, p)`. It must be a
+        Numba JIT-compilable function that accepts a 1D array `t` and a 1D
+        array `p`, and returns the (m x n) Jacobian matrix as a 2D NumPy array
+        (float64 dtype), where m is the number of data points and n is the
+        number of parameters. If None, the Jacobian is computed using
+        finite differences via :func:`_lm_finite_difference_jacobian`.
+
+    Returns
+    -------
+    p_fit : numpy.ndarray
+        The fitted parameter values (n-element 1D array, float64 dtype).
+    cov_p : numpy.ndarray
+        The estimated covariance matrix of the fitted parameters (n x n 2D array,
+        float64 dtype). This is computed as `(J^T W J)^-1`. It contains `np.inf`
+        or `np.nan` if the matrix is singular or cannot be inverted (e.g.,
+        insufficient degrees of freedom, m <= n).
+    chi2 : float
+        The final weighted Chi-squared value (`sum(weights * residuals**2)`).
+    n_iter_final : int
+        The number of iterations performed until convergence or reaching `max_iter`.
+    converged : bool
+        True if the algorithm converged within `max_iter` according to the
+        specified tolerances (`tol_g`, `tol_p`, or `tol_c`), False otherwise.
+
+    Notes
+    -----
+    The function is decorated with ``@jit(nopython=True, cache=True, fastmath=True)``
+    for Numba acceleration. Ensure that ``func``, ``jac_func`` (if provided), and
+    all operations within them are Numba-compatible.
+
+    Uses a small epsilon value (``_EPS``) derived from machine precision for
+    numerical stability, e.g., in checks for near-zero denominators or matrix
+    diagonals.
+
+    Convergence is checked *after* a successful step (where Chi-squared decreases).
+
+    The covariance matrix ``(J^T W J)^-1`` is a standard output of LM. If weights ``W``
+    represent ``1/sigma_i^2`` (inverse variances), this is the parameter covariance.
+    If weights are uniform (unweighted least squares), this needs to be scaled
+    by the reduced Chi-squared (``chi2 / (m - n)``) to estimate the parameter
+    covariance matrix assuming independent, identically distributed errors. This
+    scaling is **not** performed by this core function; it returns ``(J^T W J)^-1`` directly.
+
+    For a detailed description of the algorithm and its convergence properties,
+    see :cite:`levenberg1944method`, :cite:`marquardt1963algorithm`,
+    and :cite:`nocedal2006numerical`. The implementation loosely follows
+    concepts described by :cite:`gavin2020levenberg`.
+
+    See Also
+    --------
+    :func:`levenberg_marquardt_pixelwise` : Applies this core algorithm to 3D pixel data.
+    :func:`_lm_finite_difference_jacobian` : The internal function used for FD Jacobian when `jac_func` is None.
     """
     m = t.shape[0]
     n = p0.shape[0]
@@ -145,7 +267,7 @@ def levenberg_marquardt_core(
         final_cov_p = np.full((n, n), np.nan, dtype=p.dtype)
         try:
             if (m - n > 0) and np.any(np.abs(JtWJ) > _EPS):
-                final_cov_p = np.linalg.inv(JtWJ)
+                final_cov_p = np.linalg.inv(JtWJ).astype(np.float64)
         except Exception:
             pass
         return p, final_cov_p, chi2, n_iter_final, converged
@@ -284,7 +406,7 @@ def levenberg_marquardt_core(
         dof = m - n
         if dof > 0:
             if np.any(np.abs(JtWJ) > _EPS):
-                final_cov_p = np.linalg.inv(JtWJ)
+                final_cov_p = np.linalg.inv(JtWJ).astype(np.float64)
     except Exception:
         pass
 
@@ -318,9 +440,9 @@ def levenberg_marquardt_pixelwise(
     """
     Applies Levenberg-Marquardt fitting pixel-wise to 3D data.
 
-    Numba JIT compiled with `parallel=True` for performing fits on multiple
-    pixels concurrently using `numba.prange`. Each pixel's curve
-    `y_dat_3d[r, c, :]` is fitted independently using :func:`levenberg_marquardt_core`.
+    Numba JIT compiled with ``parallel=True`` for performing fits on multiple
+    pixels concurrently using ``numba.prange``. Each pixel's curve
+    ``y_dat_3d[r, c, :]`` is fitted independently using :func:`levenberg_marquardt_core`.
 
     Parameters
     ----------
@@ -353,20 +475,20 @@ def levenberg_marquardt_pixelwise(
     Returns
     -------
     tuple
-        Contains 3D/2D arrays corresponding to the outputs of
-        :func:`levenberg_marquardt_core` for each pixel:
-        - p_results : numpy.ndarray (rows x cols x n_params)
-            Fitted parameters for each pixel. Contains `np.nan` for skipped pixels.
-        - cov_p_results : numpy.ndarray (rows x cols x n_params x n_params)
-            Covariance matrices for each pixel. Contains `np.inf`/`np.nan` for
-            non-calculable/skipped pixels.
-        - chi2_results : numpy.ndarray (rows x cols)
-            Final weighted Chi-squared values for each pixel. Contains `np.nan`
-            for skipped pixels.
-        - n_iter_results : numpy.ndarray (rows x cols, dtype=int)
-            Number of iterations for each pixel. Contains 0 for skipped pixels.
-        - converged_results : numpy.ndarray (rows x cols, dtype=bool)
-            Convergence status for each pixel. Contains False for skipped pixels.
+        Contains 3D/2D arrays corresponding to the outputs of :func:`levenberg_marquardt_core` for each pixel:
+            - p_results : numpy.ndarray (rows x cols x n_params)
+                Fitted parameters for each pixel. Contains `np.nan` for skipped pixels.
+            - cov_p_results : numpy.ndarray (rows x cols x n_params x n_params)
+                Covariance matrices for each pixel. Contains `np.inf`/`np.nan` for
+                non-calculable/skipped pixels.
+            - chi2_results : numpy.ndarray (rows x cols)
+                Final weighted Chi-squared values for each pixel. Contains `np.nan`
+                for skipped pixels.
+            - n_iter_results : numpy.ndarray (rows x cols, dtype=int)
+                Number of iterations for each pixel. Contains 0 for skipped pixels.
+            - converged_results : numpy.ndarray (rows x cols, dtype=bool)
+                Convergence status for each pixel. Contains False for skipped pixels.
+
     """
     rows = y_dat_3d.shape[0]
     cols = y_dat_3d.shape[1]
@@ -378,9 +500,7 @@ def levenberg_marquardt_pixelwise(
         (rows, cols, num_params, num_params), np.nan, dtype=p0_global.dtype
     )
     chi2_results = np.full((rows, cols), np.nan, dtype=p0_global.dtype)
-    n_iter_results = np.zeros(
-        (rows, cols), dtype=np.int32
-    )  # Use int32 for iteration count
+    n_iter_results = np.zeros((rows, cols), dtype=int)  # Use int32 for iteration count
     converged_results = np.zeros((rows, cols), dtype=np.bool_)  # Use bool for flags
 
     # Loop over pixels in parallel using numba.prange
