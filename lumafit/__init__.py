@@ -484,7 +484,7 @@ def levenberg_marquardt_pixelwise(
             - chi2_results : numpy.ndarray (rows x cols)
                 Final weighted Chi-squared values for each pixel. Contains `np.nan`
                 for skipped pixels.
-            - n_iter_results : numpy.ndarray (rows x cols, dtype=int)
+            - n_iter_results : numpy.ndarray (rows x cols, dtype=np.int_)
                 Number of iterations for each pixel. Contains 0 for skipped pixels.
             - converged_results : numpy.ndarray (rows x cols, dtype=bool)
                 Convergence status for each pixel. Contains False for skipped pixels.
@@ -500,7 +500,7 @@ def levenberg_marquardt_pixelwise(
         (rows, cols, num_params, num_params), np.nan, dtype=p0_global.dtype
     )
     chi2_results = np.full((rows, cols), np.nan, dtype=p0_global.dtype)
-    n_iter_results = np.zeros((rows, cols), dtype=int)  # Use int32 for iteration count
+    n_iter_results = np.zeros((rows, cols), dtype=np.int_)
     converged_results = np.zeros((rows, cols), dtype=np.bool_)  # Use bool for flags
 
     # Loop over pixels in parallel using numba.prange
