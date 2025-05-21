@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.2.1 (2025-05-21)
+
+### Bug Fixes
+
+- Provide a similar interface as scipys least_square
+  ([`7084535`](https://github.com/arunoruto/lumafit/commit/708453507b270cc536c2b92b706c0d86552c8b4f))
+
+
 ## v0.2.0 (2025-05-21)
 
 ### Bug Fixes
