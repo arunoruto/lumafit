@@ -1,6 +1,6 @@
 [project]
 name = "lumafit"
-version = "0.1.0"
+version = "0.2.0"
 description = "A Numba-accelerated Levenberg-Marquardt fitting library"
 readme = "README.md"
 authors = [{ name = "Mirza Arnaut", email = "mirza.arnaut@tu-dortmund.de" }]
