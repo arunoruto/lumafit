@@ -14,37 +14,41 @@ from numba import jit
 from scipy.optimize import least_squares
 
 # --- Test Models (Numba JIT-able) ---
-# These models now define the function signature func(p, t, *args_additional)
-# where `t` is always the explicit independent variable array.
+# These models now define the function signature func(p, *args)
+# The `args` tuple will typically contain `t` as its first element for these models.
 
 
-@jit(nopython=True, cache=True)
-def model_exponential_decay(p, t, *args_additional):
+@jit(nopython=True, cache=True, fastmath=True)  # Added fastmath
+def model_exponential_decay(p, *args):
     """
     Exponential decay model: y = p[0]*exp(-t/p[1]) + p[2]*exp(-t/p[3])
 
     Parameters p: [Amplitude1, DecayConstant1, Amplitude2, DecayConstant2]
     """
-    # args_additional not used by this model, but must be accepted.
+    # Assuming `t` is the first element in `args`
+    t: npt.NDArray[np.float64] = args[0]  # Explicitly hint type for Numba
+
     term1 = np.zeros_like(t, dtype=np.float64)
-    # Check for non-zero p[1] before division. np.abs(scalar) is scalar, so direct if is fine.
-    if np.abs(p[1]) > 1e-12:
+    if (
+        np.abs(p[1]) > 1e-12
+    ):  # p[1] is scalar, so np.abs(scalar) is scalar. This comparison is fine.
         term1 = p[0] * np.exp(-t / p[1])
     term2 = np.zeros_like(t, dtype=np.float64)
-    # Check for non-zero p[3] before division.
-    if np.abs(p[3]) > 1e-12:
+    if np.abs(p[3]) > 1e-12:  # p[3] is scalar. This comparison is fine.
         term2 = p[2] * np.exp(-t / p[3])
     return term1 + term2
 
 
-@jit(nopython=True, cache=True)
-def model_polarization(p, t, *args_additional):
+@jit(nopython=True, cache=True, fastmath=True)  # Added fastmath
+def model_polarization(p, *args):
     """
     Example polarization model: y = p[0] * sin(t_rad)^p[1] * cos(t_rad/2)^p[2] * sin(t_rad - p[3]_rad)
 
     Parameters p: [Amplitude, Exponent1, Exponent2, PhaseInDegrees]
     """
-    # args_additional not used by this model, but must be accepted.
+    # Assuming `t` is the first element in `args`
+    t: npt.NDArray[np.float64] = args[0]  # Explicitly hint type for Numba
+
     t_rad = t * np.pi / 180.0
     p3_rad = p[3] * np.pi / 180.0
 
@@ -69,16 +73,18 @@ def model_polarization(p, t, *args_additional):
 
 
 # --- Analytical Jacobian Functions (Numba JIT-able) ---
-# These functions now accept (p, t, *args_additional)
+# These functions accept (p, *args) and return the Jacobian J (m x n)
 
 
-@jit(nopython=True, cache=True)
-def analytic_jacobian_exp_decay(p, t, *args_additional):
+@jit(nopython=True, cache=True, fastmath=True)  # Added fastmath
+def analytic_jacobian_exp_decay(p, *args):
     """
     Analytical Jacobian for model_exponential_decay(p, t, *args_additional).
     J[i, j] = d(model_exponential_decay(p, t)) / d(p[j])
     """
-    # args_additional not used by this Jacobian, but must be accepted.
+    # Assuming `t` is the first element in `args`
+    t: npt.NDArray[np.float64] = args[0]  # Explicitly hint type for Numba
+
     m = t.shape[0]
     n = p.shape[0]
     J = np.empty((m, n), dtype=t.dtype)
@@ -116,13 +122,15 @@ def analytic_jacobian_exp_decay(p, t, *args_additional):
     return J
 
 
-@jit(nopython=True, cache=True)
-def analytic_jacobian_polarization(p, t, *args_additional):
+@jit(nopython=True, cache=True, fastmath=True)  # Added fastmath
+def analytic_jacobian_polarization(p, *args):
     """
     Analytical Jacobian for model_polarization(p, t, *args_additional).
     J[i, j] = d(model_polarization(p, t)) / d(p[j])
     """
-    # args_additional not used by this Jacobian, but must be accepted.
+    # Assuming `t` is the first element in `args`
+    t: npt.NDArray[np.float64] = args[0]  # Explicitly hint type for Numba
+
     m = t.shape[0]
     n = p.shape[0]
     J = np.empty((m, n), dtype=t.dtype)
@@ -167,7 +175,8 @@ def analytic_jacobian_polarization(p, t, *args_additional):
 # --- Scipy Residual Function Wrapper ---
 # This is the 'fun' argument for scipy.optimize.least_squares
 # It MUST match the signature expected by SciPy's API: fun(x, *args, **kwargs)
-# We need to capture the `lumafit_args_additional` for our models.
+# `target_y_scipy` corresponds to the data to fit against.
+# `t_scipy` is passed explicitly here for these tests, as are `lumafit_args_additional`.
 def residuals_for_scipy(
     p_scipy,
     model_func,
@@ -178,7 +187,7 @@ def residuals_for_scipy(
     lumafit_args_additional,
 ):
     """Calculates residuals for SciPy's least_squares."""
-    # model_func now needs to be called with its own `t_scipy` and `*lumafit_args_additional`
+    # model_func now needs to be called with `p`, `t_scipy`, and `*lumafit_args_additional`
     residuals = model_func(p_scipy, t_scipy, *lumafit_args_additional) - target_y_scipy
     if weights_scipy_sqrt is not None:
         return weights_scipy_sqrt * residuals
@@ -220,7 +229,7 @@ def exp_decay_data_fixture():
     # Model now takes `p, t, *args_additional`. `args_additional` is empty tuple here.
     y_clean = model_exponential_decay(p_true, t_data, ())
     return {
-        "t": t_data,  # Still keep t_data in fixture for test setup, as it's passed explicitly to LM functions
+        "t": t_data,  # Still keep t_data in fixture as it's passed explicitly to LM functions
         "y_clean": y_clean,
         "p_true": p_true,
         "model": model_exponential_decay,
@@ -236,7 +245,7 @@ def polarization_data_fixture():
     # Model now takes `p, t, *args_additional`. `args_additional` is empty tuple here.
     y_clean = model_polarization(p_true, t_data, ())
     return {
-        "t": t_data,  # Still keep t_data in fixture for test setup
+        "t": t_data,  # Still keep t_data in fixture
         "y_clean": y_clean,
         "p_true": p_true,
         "model": model_polarization,
@@ -245,7 +254,13 @@ def polarization_data_fixture():
 
 
 # --- Test Configs ---
-LMBA_TOL_CONFIG = {"tol_g": 1e-7, "tol_p": 1e-7, "tol_c": 1e-7, "max_iter": 1000}
+LMBA_TOL_CONFIG = {
+    "tol_g": 1e-7,
+    "tol_p": 1e-7,
+    "tol_c": 1e-7,
+    "max_iter": 1000,
+    "dp_ratio": 1e-8,
+}
 SCIPY_TOL_CONFIG = {
     "ftol": 1e-7,
     "xtol": 1e-7,
@@ -273,23 +288,21 @@ def test_no_noise(data_fixture_name, request):
     if d["model"] == model_polarization:
         p_initial = np.array([2.2, 3.3, 5.3, 16.0], dtype=np.float64)
 
-    lmba_params = LMBA_TOL_CONFIG.copy()
+    # Prepare specific LMba parameters for this test case
+    core_lm_params = LMBA_TOL_CONFIG.copy()
     if d["model"] == model_polarization:
-        lmba_params["dp_ratio"] = 1e-7
+        core_lm_params["dp_ratio"] = 1e-7  # Override dp_ratio if needed
 
-    # Lumafit `args` will be an empty tuple for `*args_additional`
-    lumafit_args_additional = ()
+    lumafit_args_additional = (d["t"],)  # `t_data` is now in `args` tuple
 
-    # Run the LMba fit on clean (no-noise) data using finite difference Jacobian
     p_fit, cov, chi2, iters, conv = levenberg_marquardt_core(
-        d["model"],
-        d["t"],  # Pass t explicitly
-        p_initial,
+        func=d["model"],
+        p0=p_initial,  # p0 is first explicit arg
         target_y=d["y_clean"],  # Pass y_clean as target_y
         weights=None,
         jac_func=None,
         args=lumafit_args_additional,  # Pass args_additional
-        **lmba_params,
+        **core_lm_params,  # Pass parameters from the dictionary using **
     )
 
     assert conv, (
@@ -328,30 +341,25 @@ def test_with_noise_vs_scipy(data_fixture_name, request):
     weights_arr = np.full_like(y_noisy, 1.0 / (noise_std**2 + _EPS), dtype=np.float64)
     sqrt_weights_arr = np.sqrt(weights_arr)
 
-    lmba_params = LMBA_TOL_CONFIG.copy()
+    core_lm_params = LMBA_TOL_CONFIG.copy()
     if d["model"] == model_polarization:
-        lmba_params["dp_ratio"] = 1e-7
+        core_lm_params["dp_ratio"] = 1e-7
 
-    # Lumafit `args` will be an empty tuple for `*args_additional`
-    lumafit_args_additional = ()
+    lumafit_args_additional = (d["t"],)  # `t_data` is now in `args` tuple for models
 
-    # LMba fit (using default Finite Difference Jacobian)
     p_fit_lmba, _, chi2_lmba, iters_lmba, conv_lmba = levenberg_marquardt_core(
-        d["model"],
-        d["t"],  # Pass t explicitly
-        p_initial,
+        func=d["model"],
+        p0=p_initial,  # p0 is first explicit arg
         target_y=y_noisy,  # Pass y_noisy as target_y
         weights=weights_arr,
         jac_func=None,
         args=lumafit_args_additional,  # Pass args_additional
-        **lmba_params,
+        **core_lm_params,  # Pass parameters from the dictionary using **
     )
     assert conv_lmba, (
         f"LMba with weights failed (iters={iters_lmba}, chi2={chi2_lmba:.2e})"
     )
 
-    # Scipy fit (using its default Finite Difference Jacobian)
-    # The `args` tuple for SciPy's `least_squares` fun/jac now includes `t_scipy` and `lumafit_args_additional`
     scipy_args = (
         d["model"],
         y_noisy,
@@ -384,7 +392,7 @@ def test_with_noise_vs_scipy(data_fixture_name, request):
 def test_pixelwise_fitting(exp_decay_data_dict):
     """Test the pixelwise fitting function on a small 3D dataset."""
     d = exp_decay_data_dict
-    t_data_common = d["t"]  # Common independent variable data
+    t_data_common = d["t"]
     rows, cols, depth = 2, 2, t_data_common.shape[0]
 
     y_data_3d = np.empty((rows, cols, depth), dtype=np.float64)
@@ -397,7 +405,6 @@ def test_pixelwise_fitting(exp_decay_data_dict):
                 1 + rng.uniform(-0.05, 0.05, size=d["p_true"].shape)
             )
             p_true_pixels[r_idx, c_idx, :] = p_pixel_true.astype(np.float64)
-            # Model now takes `p, t, *args_additional`. `args_additional` is empty tuple here.
             y_clean_pixel = d["model"](p_pixel_true, t_data_common, ())
             noise_pixel = rng.normal(0, 0.01, size=depth).astype(np.float64)
             y_data_3d[r_idx, c_idx, :] = (y_clean_pixel + noise_pixel).astype(
@@ -406,30 +413,30 @@ def test_pixelwise_fitting(exp_decay_data_dict):
 
     p0_global = (d["p_true"] * 0.9).astype(np.float64)
 
-    lmba_pixel_params = LMBA_TOL_CONFIG.copy()
-    lmba_pixel_params.update(
+    core_lm_pixel_params = LMBA_TOL_CONFIG.copy()
+    core_lm_pixel_params.update(
         {"max_iter": 300, "tol_g": 1e-6, "tol_p": 1e-6, "tol_c": 1e-6}
     )
 
-    # Lumafit `args_for_each_pixel` will be an empty tuple
-    lumafit_args_for_each_pixel_empty = ()
+    lumafit_args_for_each_pixel_empty = (
+        t_data_common,
+    )  # Common `t` is always the first in this tuple
 
-    # Test pixelwise with default Finite Difference Jacobian
     p_res, cov_res, chi2_res, n_iter_res, conv_res = levenberg_marquardt_pixelwise(
-        d["model"],
-        t_data_common,  # Pass t_common explicitly
-        p0_global,
+        func=d["model"],
+        p0_global=p0_global,  # p0 is first explicit arg
         target_y_3d=y_data_3d,
+        weights_1d=None,
         jac_func=None,
-        args_for_each_pixel=lumafit_args_for_each_pixel_empty,  # Pass empty tuple
-        **lmba_pixel_params,
+        args_for_each_pixel=lumafit_args_for_each_pixel_empty,
+        **core_lm_pixel_params,  # Pass parameters from the dictionary using **
     )
 
     assert conv_res.shape == (rows, cols)
     assert p_res.shape == (rows, cols, d["p_true"].shape[0])
     assert cov_res.shape == (rows, cols, d["p_true"].shape[0], d["p_true"].shape[0])
     assert chi2_res.shape == (rows, cols)
-    assert n_iter_res.shape == (rows, cols)
+    assert n_iter_res.shape == (rows, cols)  # Corrected NameError
 
     for r_idx in range(rows):
         for c_idx in range(cols):
@@ -448,8 +455,10 @@ def test_pixelwise_fitting(exp_decay_data_dict):
 def test_singular_jacobian_case():
     """Test behavior when Jacobian might lead to singular JtWJ initially (e.g., constant model)."""
 
-    @jit(nopython=True, cache=True)
-    def model_constant(p, t, *args_additional):
+    @jit(nopython=True, cache=True, fastmath=True)  # Added fastmath
+    def model_constant(p, *args):
+        # Assuming `t` is the first element in `args`
+        t: npt.NDArray[np.float64] = args[0]  # Explicitly hint type for Numba
         return np.full_like(t, p[0], dtype=np.float64)
 
     t_data = np.array([1.0, 2.0, 3.0], dtype=np.float64)
@@ -457,22 +466,21 @@ def test_singular_jacobian_case():
     p_initial = np.array([1.0], dtype=np.float64)
     p_true = np.array([5.0], dtype=np.float64)
 
-    lmba_params_strict = LMBA_TOL_CONFIG.copy()
-    lmba_params_strict.update(
+    core_lm_params_strict = LMBA_TOL_CONFIG.copy()
+    core_lm_params_strict.update(
         {"tol_g": 1e-9, "tol_p": 1e-9, "tol_c": 1e-9, "max_iter": 50}
     )
 
-    # Lumafit `args` will be an empty tuple for `*args_additional`
-    lumafit_args_additional = ()
+    lumafit_args_additional = (t_data,)  # `t_data` is now in `args` tuple
 
     p_fit, cov, chi2, iters, conv = levenberg_marquardt_core(
-        model_constant,
-        t_data,  # Pass t explicitly
-        p_initial,
+        func=model_constant,
+        p0=p_initial,  # p0 is first explicit arg
         target_y=y_data,
+        weights=None,
         jac_func=None,
         args=lumafit_args_additional,  # Pass args_additional
-        **lmba_params_strict,
+        **core_lm_params_strict,  # Pass parameters from the dictionary using **
     )
     assert conv, (
         f"Singular Jacobian test failed to converge. Iter: {iters}, Chi2: {chi2:.2e}"
@@ -504,30 +512,25 @@ def test_weights_effect_vs_scipy(exp_decay_data_dict):
     )
     sqrt_weights_arr = np.sqrt(weights_arr)
 
-    lmba_params = LMBA_TOL_CONFIG.copy()
+    core_lm_params = LMBA_TOL_CONFIG.copy()
     if d["model"] == model_polarization:
-        lmba_params["dp_ratio"] = 1e-7
+        core_lm_params["dp_ratio"] = 1e-7
 
-    # Lumafit `args` will be an empty tuple for `*args_additional`
-    lumafit_args_additional = ()
+    lumafit_args_additional = (d["t"],)  # `t_data` is now in `args` tuple for models
 
-    # LMba fit with weights (using default Finite Difference Jacobian)
     p_fit_lmba_w, _, chi2_lmba_w, iters_lmba_w, conv_lmba_w = levenberg_marquardt_core(
-        d["model"],
-        d["t"],  # Pass t explicitly
-        p_initial_test,
+        func=d["model"],
+        p0=p_initial_test,  # p0 is first explicit arg
         target_y=y_noisy,
         weights=weights_arr,
         jac_func=None,
-        args=lumafit_args_additional,  # Pass args_additional
-        **lmba_params,
+        args=lumafit_args_additional,
+        **core_lm_params,  # Pass parameters from the dictionary using **
     )
     assert conv_lmba_w, (
         f"LMba with weights failed (iters={iters_lmba_w}, chi2={chi2_lmba_w})"
     )
 
-    # Scipy fit with weights (using its default Finite Difference Jacobian)
-    # The `args` tuple for SciPy's `least_squares` fun/jac now includes `t_scipy` and `lumafit_args_additional`
     scipy_args_w = (
         d["model"],
         y_noisy,
@@ -556,17 +559,15 @@ def test_weights_effect_vs_scipy(exp_decay_data_dict):
         err_msg=f"Param mismatch. LMba: {p_fit_lmba_w}, SciPy: {p_fit_scipy_w}",
     )
 
-    # LMba fit NO weights (using default Finite Difference Jacobian)
     p_fit_lmba_nw, _, chi2_lmba_nw, iters_lmba_nw, conv_lmba_nw = (
         levenberg_marquardt_core(
-            d["model"],
-            d["t"],  # Pass t explicitly
-            p_initial_test,
+            func=d["model"],
+            p0=p_initial_test,  # p0 is first explicit arg
             target_y=y_noisy,
             weights=None,
             jac_func=None,
-            args=lumafit_args_additional,  # Pass args_additional
-            **LMBA_TOL_CONFIG,
+            args=lumafit_args_additional,
+            **core_lm_params,  # Pass parameters from the dictionary using **
         )
     )
     assert conv_lmba_nw, (
@@ -604,13 +605,11 @@ def test_analytic_jacobian_vs_fd_vs_scipy(data_fixture_name, request):
     sqrt_weights_arr = np.sqrt(weights_arr)
 
     jac_analytic_func = d["jac_analytic"]
-    # Lumafit `args` will be an empty tuple for `*args_additional`
-    lumafit_args_additional = ()
+    lumafit_args_additional = (d["t"],)  # `t_data` is now in `args` tuple for models
 
-    # --- Run 1: LMba with Analytical Jacobian ---
-    lmba_params_analytic = LMBA_TOL_CONFIG.copy()
+    core_lm_params_analytic = LMBA_TOL_CONFIG.copy()
     if d["model"] == model_polarization:
-        lmba_params_analytic["dp_ratio"] = 1e-7
+        core_lm_params_analytic["dp_ratio"] = 1e-7
 
     (
         p_fit_lmba_analytic,
@@ -619,41 +618,37 @@ def test_analytic_jacobian_vs_fd_vs_scipy(data_fixture_name, request):
         iters_lmba_analytic,
         conv_lmba_analytic,
     ) = levenberg_marquardt_core(
-        d["model"],
-        d["t"],  # Pass t explicitly
-        p_initial,
+        func=d["model"],
+        p0=p_initial,  # p0 is first explicit arg
         target_y=y_noisy,
         weights=weights_arr,
         jac_func=jac_analytic_func,
-        args=lumafit_args_additional,  # Pass args_additional
-        **lmba_params_analytic,
+        args=lumafit_args_additional,
+        **core_lm_params_analytic,  # Pass parameters from the dictionary using **
     )
     assert conv_lmba_analytic, (
         f"LMba (Analytic) failed: iter={iters_lmba_analytic}, chi2={chi2_lmba_analytic:.2e}"
     )
 
-    # --- Run 2: LMba with Finite Difference Jacobian ---
-    lmba_params_fd = LMBA_TOL_CONFIG.copy()
+    core_lm_params_fd = LMBA_TOL_CONFIG.copy()
     if d["model"] == model_polarization:
-        lmba_params_fd["dp_ratio"] = 1e-7
+        core_lm_params_fd["dp_ratio"] = 1e-7
 
     p_fit_lmba_fd, _, chi2_lmba_fd, iters_lmba_fd, conv_lmba_fd = (
         levenberg_marquardt_core(
-            d["model"],
-            d["t"],  # Pass t explicitly
-            p_initial,
+            func=d["model"],
+            p0=p_initial,  # p0 is first explicit arg
             target_y=y_noisy,
             weights=weights_arr,
             jac_func=None,
-            args=lumafit_args_additional,  # Pass args_additional
-            **lmba_params_fd,
+            args=lumafit_args_additional,
+            **core_lm_params_fd,  # Pass parameters from the dictionary using **
         )
     )
     assert conv_lmba_fd, (
         f"LMba (FD) failed: iter={iters_lmba_fd}, chi2={chi2_lmba_fd:.2e}"
     )
 
-    # --- Run 3: Scipy with Analytical Jacobian ---
     scipy_res_analytic = least_squares(
         residuals_for_scipy,
         p_initial,
@@ -674,7 +669,6 @@ def test_analytic_jacobian_vs_fd_vs_scipy(data_fixture_name, request):
     p_fit_scipy_analytic = scipy_res_analytic.x
     chi2_scipy_analytic = np.sum(scipy_res_analytic.fun**2)
 
-    # --- Compare the results from the three runs ---
     param_rtol_fd_comparisons = 1e-4
     param_atol_fd_comparisons = 5e-4
     param_rtol_analytic_scipy = 1e-5

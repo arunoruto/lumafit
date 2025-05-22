@@ -24,32 +24,24 @@ _EPS = np.finfo(float).eps
 # [4] Gavin, H.P. (2020) The Levenberg-Marquardt method for nonlinear least squares curve-fitting problems.
 
 # Define the expected signature for model and Jacobian functions:
-# - Model function: func(p, t, *args) -> y_hat (or residuals)
-# - Jacobian function: jac_func(p, t, *args) -> J (m x n)
+# - Model function: func(p, *args) -> y_hat (or residuals)
+# - Jacobian function: jac_func(p, *args) -> J (m x n)
 # The `p` is always the 1D numpy array of parameters being optimized.
-# The `t` is always the 1D numpy array of independent variable data.
-# The `args` tuple contains all *other* additional positional arguments.
+# The `args` tuple contains all *other* contextual data (e.g., independent variables, fixed parameters).
 #
 # Note: Callable type hints for `*args` are tricky in Python. We use general types
-# and rely on docstrings for clarity that the function must accept `(p, t, *args_tuple)`.
+# and rely on docstrings for clarity that the function must accept `(p, *args_tuple)`.
 # The Numba JIT-compiled functions must be defined with `*args`.
-ModelFunc = Callable[
-    [npt.NDArray[np.float64], npt.NDArray[np.float64], tuple], npt.NDArray[np.float64]
-]
-JacobianFunc = Callable[
-    [npt.NDArray[np.float64], npt.NDArray[np.float64], tuple], npt.NDArray[np.float64]
-]
+ModelFunc = Callable[[npt.NDArray[np.float64], tuple], npt.NDArray[np.float64]]
+JacobianFunc = Callable[[npt.NDArray[np.float64], tuple], npt.NDArray[np.float64]]
 
 
 @jit(nopython=True, cache=True, fastmath=True)
 def _lm_finite_difference_jacobian(
     func: ModelFunc,
     p: npt.NDArray[np.float64],
-    t: npt.NDArray[np.float64],
-    y_hat: npt.NDArray[
-        np.float64
-    ],  # This is actually model output or current residuals
-    args: tuple = (),
+    y_hat: npt.NDArray[np.float64],  # This is model output or current residuals
+    args: tuple = (),  # Contains all contextual data (e.g., 't', fixed params)
     dp_ratio: float = 1e-8,
 ) -> npt.NDArray[np.float64]:
     """
@@ -61,20 +53,19 @@ def _lm_finite_difference_jacobian(
     Parameters
     ----------
     func : callable
-        The model function `y_hat = func(p, t, *args)`. Must be Numba JIT-compilable.
-        It should accept `p` (1D array), `t` (1D array), and then unpacked `args`
+        The model function `y_hat = func(p, *args)`. Must be Numba JIT-compilable.
+        It should accept `p` (1D array) and then unpacked `args`
         as positional arguments.
     p : numpy.ndarray
         Current parameter values (n-element 1D array).
-    t : numpy.ndarray
-        Independent variable data (m-element 1D array).
     y_hat : numpy.ndarray
-        Model evaluation at current `p`, `t`, i.e., `func(p, t, *args)`.
+        Model evaluation at current `p`, i.e., `func(p, *args)`.
         This is the output of the model function for the current parameters,
         used as the baseline for finite differencing.
     args : tuple, optional
         Additional positional arguments to pass to the `func` callable.
-        Defaults to an empty tuple.
+        These arguments contain all contextual data (e.g., independent variables,
+        fixed parameters) required by the model. Defaults to an empty tuple.
     dp_ratio : float, optional
         Fractional increment base for `p` for numerical derivatives.
         Actual step is `dp_ratio * (1 + abs(p))`. Default is 1e-8.
@@ -99,7 +90,7 @@ def _lm_finite_difference_jacobian(
             step = dp_ratio
 
         p_temp[j] = p_j_original + step
-        y_plus = func(p_temp, t, *args)  # pass *args
+        y_plus = func(p_temp, *args)  # pass *args
         p_temp[j] = p_j_original
 
         J[:, j] = (y_plus - y_hat) / step
@@ -109,7 +100,6 @@ def _lm_finite_difference_jacobian(
 @jit(nopython=True, cache=True, fastmath=True)
 def levenberg_marquardt_core(
     func: ModelFunc,
-    t: npt.NDArray[np.float64],
     p0: npt.NDArray[np.float64],
     target_y: npt.NDArray[np.float64] | None = None,
     weights: npt.NDArray[np.float64] | None = None,
@@ -123,16 +113,16 @@ def levenberg_marquardt_core(
     dp_ratio: float = 1e-8,
     use_marquardt_damping: bool = True,
     jac_func: JacobianFunc | None = None,
-    args: tuple = (),
+    args: tuple = (),  # All contextual data
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], float, int, bool]:
     """
     Core Levenberg-Marquardt algorithm for non-linear least squares optimization.
 
     Implements the standard Levenberg-Marquardt optimization method to find the
     parameters `p` that minimize the sum of squared weighted residuals.
-    The objective function is `sum(weights * (target_y - func(p, t, *args))**2)`
+    The objective function is `sum(weights * (target_y - func(p, *args))**2)`
     if `target_y` is provided. If `target_y` is None, it minimizes
-    `sum(weights * func(p, t, *args)**2)`.
+    `sum(weights * func(p, *args)**2)`.
 
     Supports optional weighting and uses a damping strategy (Marquardt-style
     diagonal scaling or Levenberg-style identity matrix scaling). It can utilize
@@ -146,23 +136,20 @@ def levenberg_marquardt_core(
     Parameters
     ----------
     func : callable
-        The model function `y_hat = func(p, t, *args)`. It must be a Numba JIT-compilable
-        function that accepts a 1D array `p` (parameters), a 1D array `t` (independent variable),
-        and then unpacked `args` as additional positional arguments.
+        The model function `y_hat = func(p, *args)`. It must be a Numba JIT-compilable
+        function that accepts a 1D array `p` (parameters) and then unpacked `args`
+        as additional positional arguments.
         - If `target_y` is provided, `func` should return a 1D array `y_hat`
           of model predictions, with `len(y_hat)` matching `len(target_y)`.
         - If `target_y` is None, `func` should return a 1D array representing
           the residuals directly.
-    t : numpy.ndarray
-        Independent variable data (m-element 1D array, float64 dtype).
-        This is passed as the second argument to `func` and `jac_func`.
     p0 : numpy.ndarray
         Initial guess for the parameters `p` (n-element 1D array, float64 dtype).
         This is passed as the first argument to `func` and `jac_func`.
     target_y : numpy.ndarray or None, optional, default=None
         Dependent variable (experimental) data (m-element 1D array, float64 dtype)
-        to be fitted against the model output `func(p, t, *args)`.
-        If None, the function `func(p, t, *args)` itself is minimized (i.e., its output
+        to be fitted against the model output `func(p, *args)`.
+        If None, the function `func(p, *args)` itself is minimized (i.e., its output
         is treated as the residual to be squared and summed). This is useful
         for direct minimization of a custom objective function.
     weights : numpy.ndarray or None, optional, default=None
@@ -207,16 +194,16 @@ def levenberg_marquardt_core(
         Marquardt damping is often preferred as it is scale-invariant with respect
         to parameter scaling.
     jac_func : callable or None, optional, default=None
-        Analytical Jacobian function `J = jac_func(p, t, *args)`. It must be a
-        Numba JIT-compilable function that accepts a 1D array `p`, a 1D array `t`,
-        and then unpacked `args` as additional positional arguments. It should return
+        Analytical Jacobian function `J = jac_func(p, *args)`. It must be a
+        Numba JIT-compilable function that accepts a 1D array `p` and then
+        unpacked `args` as additional positional arguments. It should return
         the (m x n) Jacobian matrix as a 2D NumPy array (float64 dtype),
         where `m` is the number of residuals/model points and `n` is the
         number of parameters. If None, the Jacobian is computed using
         finite differences via :func:`_lm_finite_difference_jacobian`.
     args : tuple, optional
         Additional positional arguments to pass to the `func` and `jac_func` callables.
-        Defaults to an empty tuple. These arguments are passed as `*args`.
+        Defaults to an empty tuple. These arguments contain all contextual data.
 
     Returns
     -------
@@ -275,7 +262,7 @@ def levenberg_marquardt_core(
     p = p0.copy()
 
     # Determine m (number of residuals/measurements) and initial residuals
-    y_hat = func(p, t, *args)  # Call func with p, t, and *args
+    y_hat = func(p, *args)  # Call func with p and *args
     m = y_hat.shape[0]  # m is length of the function output
 
     if target_y is None:
@@ -291,7 +278,7 @@ def levenberg_marquardt_core(
                 )
             W_arr = weights.copy()
     else:
-        # If target_y is provided, residuals = target_y - func(p, t, *args)
+        # If target_y is provided, residuals = target_y - func(p, *args)
         if target_y.shape[0] != m:
             raise ValueError(
                 f"Length of `target_y` ({target_y.shape[0]}) must match length of `func` output ({m})."
@@ -312,11 +299,11 @@ def levenberg_marquardt_core(
     W_res = W_arr * res
     J: npt.NDArray[np.float64]
     if jac_func is not None:
-        J = jac_func(p, t, *args)  # Pass *args
+        J = jac_func(p, *args)  # Pass *args
     else:
         J = _lm_finite_difference_jacobian(
-            func, p, t, y_hat, args, dp_ratio
-        )  # Pass func, p, t, y_hat, args
+            func, p, y_hat, args, dp_ratio
+        )  # Pass func, p, y_hat, args
 
     if W_arr.ndim == 1:
         W_J = W_arr[:, np.newaxis] * J  # Apply weights to Jacobian
@@ -393,7 +380,7 @@ def levenberg_marquardt_core(
             continue
 
         p_try = p + dp_step
-        y_hat_try = func(p_try, t, *args)  # Pass *args
+        y_hat_try = func(p_try, *args)  # Pass *args
 
         if not np.all(np.isfinite(y_hat_try)):
             lambda_val *= lambda_up_factor
@@ -421,11 +408,11 @@ def levenberg_marquardt_core(
             y_hat = y_hat_try  # Update y_hat for next iteration's calculations
 
             if jac_func is not None:
-                J = jac_func(p, t, *args)  # Pass *args
+                J = jac_func(p, *args)  # Pass *args
             else:
                 J = _lm_finite_difference_jacobian(
-                    func, p, t, y_hat, args, dp_ratio
-                )  # Pass func, p, t, y_hat, args
+                    func, p, y_hat, args, dp_ratio
+                )  # Pass func, p, y_hat, args
 
             if W_arr.ndim == 1:
                 W_J = W_arr[:, np.newaxis] * J
@@ -493,7 +480,6 @@ def levenberg_marquardt_core(
 @jit(nopython=True, parallel=True, cache=True, fastmath=True)
 def levenberg_marquardt_pixelwise(
     func: ModelFunc,
-    t_common: npt.NDArray[np.float64],  # Independent variable 't' is now explicit here
     p0_global: npt.NDArray[np.float64],
     target_y_3d: npt.NDArray[np.float64] | None = None,
     weights_1d: npt.NDArray[np.float64] | None = None,
@@ -507,7 +493,7 @@ def levenberg_marquardt_pixelwise(
     dp_ratio: float = 1e-8,
     use_marquardt_damping: bool = True,
     jac_func: JacobianFunc | None = None,
-    args_for_each_pixel: tuple = (),
+    args_for_each_pixel: tuple = (),  # All contextual data for each pixel
 ) -> tuple[
     npt.NDArray[np.float64],
     npt.NDArray[np.float64],
@@ -525,16 +511,15 @@ def levenberg_marquardt_pixelwise(
     Parameters
     ----------
     func : callable
-        Model function `y_hat = func(p, t, *args)`. It must be a Numba JIT-compilable
-        function that accepts a 1D array `p` (parameters), a 1D array `t` (independent variable),
-        and then unpacked `args` as additional positional arguments.
+        Model function `y_hat = func(p, *args)`. It must be a Numba JIT-compilable
+        function that accepts a 1D array `p` (parameters) and then unpacked `args`
+        as positional arguments.
         - If `target_y_3d` is provided, `func` should return a 1D array `y_hat`
-          of model predictions. The length must match `t_common.shape[0]`.
+          of model predictions. The length must match the number of data points
+          per pixel (e.g., `target_y_3d.shape[2]`).
         - If `target_y_3d` is None, `func` should return a 1D array representing
-          the residuals directly. The length must match `t_common.shape[0]`.
-    t_common : numpy.ndarray
-        Independent variable data, common for all pixels (m-element 1D array).
-        This is passed as the `t` argument to `func` and `jac_func` for each pixel.
+          the residuals directly. The length must match the number of data points
+          per pixel.
     p0_global : numpy.ndarray
         Global initial guess for parameters (n-element 1D array),
         used for each pixel's fit.
@@ -542,25 +527,26 @@ def levenberg_marquardt_pixelwise(
         Dependent variable data (rows x cols x m_depth_points 3D array).
         Each `target_y_3d[r, c, :]` is a curve to be fitted.
         If None, the `func` itself is minimized (its output treated as residual).
-        `target_y_3d.shape[2]` must match `t_common.shape[0]`.
+        If `target_y_3d` is provided, it determines the `rows`, `cols`, and `m`
+        (number of measurements per pixel).
     weights_1d : numpy.ndarray or None, optional
         1D array of weights (m-element), applied identically to each pixel's fit.
         If None (default), uniform weights (1.0) are used. Must be Numba compatible.
-        Its length `m` must match `t_common.shape[0]`.
+        Its length `m` must match the number of measurements per pixel.
     max_iter, tol_g, ..., use_marquardt_damping :
         Parameters for :func:`levenberg_marquardt_core` (see its docstring).
     dp_ratio : float, optional
         Step size ratio for finite difference Jacobian calculation.
         Default is 1e-8.
     jac_func : callable or None, optional
-        Analytical Jacobian function `J = jac_func(p, t, *args)`. Must be Numba
-        JIT-compilable and accept a 1D array `p`, a 1D array `t`, and then
+        Analytical Jacobian function `J = jac_func(p, *args)`. It must be a
+        Numba JIT-compilable function that accepts a 1D array `p` and then
         unpacked `args` as additional positional arguments. It should return
         the (m x n) Jacobian as a 2D NumPy array. If None (default), the finite
         difference Jacobian is calculated internally.
     args_for_each_pixel : tuple, optional
         Additional positional arguments to pass to the `func` and `jac_func` callables
-        for *each* pixel. Defaults to an empty tuple. These arguments are passed as `*args`.
+        for *each* pixel. Defaults to an empty tuple. These arguments contain all contextual data.
 
     Returns
     -------
@@ -582,24 +568,17 @@ def levenberg_marquardt_pixelwise(
     """
     rows: int
     cols: int
-    # num_measurements_per_pixel: int # `m` from core LM - now implicit from t_common
-
-    # The number of measurements per pixel is always given by t_common
-    num_measurements_per_pixel = t_common.shape[0]
+    # num_measurements_per_pixel: int # This is determined by the length of output from func(p, *args)
 
     if target_y_3d is not None:
-        if target_y_3d.shape[2] != num_measurements_per_pixel:
-            raise ValueError(
-                f"Third dimension of `target_y_3d` ({target_y_3d.shape[2]}) must match length of `t_common` ({num_measurements_per_pixel})."
-            )
         rows, cols, _ = target_y_3d.shape
     else:
         # If target_y_3d is None, we need rows/cols explicitly, as they cannot be inferred
-        # from t_common or p0_global's global nature.
+        # from p0_global or the function's output (which needs p and args).
         # This function is primarily designed for image data, so target_y_3d is usually present.
         raise ValueError(
             "`target_y_3d` must be provided for pixel-wise fitting "
-            "to define the image dimensions (rows, cols)."
+            "to define the image dimensions (rows, cols, and number of measurements per pixel)."
         )
 
     num_params = p0_global.shape[0]
@@ -625,12 +604,15 @@ def levenberg_marquardt_pixelwise(
 
         p0_pixel = p0_global.copy()
 
+        # The `args_for_each_pixel` tuple is passed directly to the core LM function.
+        # The user's model function `func(p, *args_for_each_pixel)` is responsible
+        # for extracting its independent variable (e.g., `t`) and other contextual
+        # data from within `args_for_each_pixel`.
         p_fit, cov_p, chi2_val, iters, conv_flag = levenberg_marquardt_core(
             func,
-            t_common,  # Pass t_common explicitly to core LM
-            p0_pixel,
-            target_y=pixel_target_y,  # Pass pixel-specific target_y
-            weights=weights_1d,  # Pass the 1D weights array (same for all pixels)
+            p0_pixel,  # p0 is first explicit arg
+            target_y=pixel_target_y,  # pixel-specific target_y
+            weights=weights_1d,  # 1D weights
             max_iter=max_iter,
             tol_g=tol_g,
             tol_p=tol_p,
