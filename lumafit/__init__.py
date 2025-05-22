@@ -14,6 +14,7 @@ import numpy as np
 import numpy.typing as npt
 from numba import jit, prange
 
+__version__ = "0.2.3"
 # Define epsilon near machine precision for numerical stability
 _EPS = np.finfo(float).eps
 
