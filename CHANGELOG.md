@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v0.2.3 (2025-05-22)
+
+### Bug Fixes
+
+- Downgrade minimal version of numpy to pre 2.0
+  ([`3494f63`](https://github.com/arunoruto/lumafit/commit/3494f638ce4af926a6c498a87c096d07afa4b90c))
+
+### Documentation
+
+- Add the __version__ string to the project
+  ([`6f3c13f`](https://github.com/arunoruto/lumafit/commit/6f3c13f09888158c2e8cd869198d4f8564bb559d))
+
+
 ## v0.2.2 (2025-05-22)
 
 ### Bug Fixes
