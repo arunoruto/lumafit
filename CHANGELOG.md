@@ -1,6 +1,14 @@
 # CHANGELOG
 
 
+## v0.2.2 (2025-05-22)
+
+### Bug Fixes
+
+- Remove all references to the t parameter
+  ([`6a02f26`](https://github.com/arunoruto/lumafit/commit/6a02f26408d43bd009adf39b7ccd39855a6b1b4b))
+
+
 ## v0.2.1 (2025-05-21)
 
 ### Bug Fixes
