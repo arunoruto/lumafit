@@ -9,6 +9,7 @@ pixel-wise fitting in 3D image data.
 """
 
 from collections.abc import Callable
+from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
@@ -17,6 +18,9 @@ from numba import jit, prange
 __version__ = "0.2.3"
 # Define epsilon near machine precision for numerical stability
 _EPS = np.finfo(float).eps
+LAMBDA_DEFAULT = 1e-2
+LAMBDA_MAX = 1e15
+LAMBDA_CHECK = 1e12
 
 # References for the Levenberg-Marquardt algorithm implementations:
 # [1] Levenberg, K. (1944). A method for the solution of certain non-linear problems in least squares.
@@ -38,12 +42,13 @@ JacobianFunc = Callable[[npt.NDArray[np.float64], tuple], npt.NDArray[np.float64
 
 
 @jit(nopython=True, cache=True, fastmath=True)
-def _lm_finite_difference_jacobian(
+def _finite_difference_jacobian(
     func: ModelFunc,
     p: npt.NDArray[np.float64],
     y_hat: npt.NDArray[np.float64],  # This is model output or current residuals
     args: tuple = (),  # Contains all contextual data (e.g., 't', fixed params)
     dp_ratio: float = 1e-8,
+    type: Literal["forward", "central"] = "central",
 ) -> npt.NDArray[np.float64]:
     """
     Computes Jacobian dy/dp via forward finite differences.
@@ -92,9 +97,16 @@ def _lm_finite_difference_jacobian(
 
         p_temp[j] = p_j_original + step
         y_plus = func(p_temp, *args)  # pass *args
+        if type == "central":
+            # Central difference
+            p_temp[j] = p_j_original - step
+            y_minus = func(p_temp, *args)  # pass *args
+        else:
+            # Forward difference
+            y_minus = y_hat  # Use current y_hat as the "minus" value
         p_temp[j] = p_j_original
 
-        J[:, j] = (y_plus - y_hat) / step
+        J[:, j] = (y_plus - y_minus) / step
     return J
 
 
@@ -108,14 +120,20 @@ def levenberg_marquardt_core(
     tol_g: float = 1e-8,
     tol_p: float = 1e-8,
     tol_c: float = 1e-8,
-    lambda_0_factor: float = 1e-2,
+    lambda_0_factor: float = LAMBDA_DEFAULT,
     lambda_up_factor: float = 3.0,
     lambda_down_factor: float = 2.0,
     dp_ratio: float = 1e-8,
     use_marquardt_damping: bool = True,
     jac_func: JacobianFunc | None = None,
     args: tuple = (),  # All contextual data
-) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], float, int, bool]:
+) -> tuple[
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64 | np.floating],
+    float,
+    int,
+    bool,
+]:
     """
     Core Levenberg-Marquardt algorithm for non-linear least squares optimization.
 
@@ -201,7 +219,7 @@ def levenberg_marquardt_core(
         the (m x n) Jacobian matrix as a 2D NumPy array (float64 dtype),
         where `m` is the number of residuals/model points and `n` is the
         number of parameters. If None, the Jacobian is computed using
-        finite differences via :func:`_lm_finite_difference_jacobian`.
+        finite differences via :func:`_finite_difference_jacobian`.
     args : tuple, optional
         Additional positional arguments to pass to the `func` and `jac_func` callables.
         Defaults to an empty tuple. These arguments contain all contextual data.
@@ -217,7 +235,7 @@ def levenberg_marquardt_core(
         insufficient degrees of freedom, m <= n).
     chi2 : float
         The final weighted Chi-squared value (`sum(weights * residuals**2)`).
-    n_iter_final : int
+    n_iter : int
         The number of iterations performed until convergence or reaching `max_iter`.
     converged : bool
         True if the algorithm converged within `max_iter` according to the
@@ -256,7 +274,7 @@ def levenberg_marquardt_core(
     See Also
     --------
     :func:`levenberg_marquardt_pixelwise` : Applies this core algorithm to 3D pixel data.
-    :func:`_lm_finite_difference_jacobian` : The internal function used for FD Jacobian when `jac_func` is None.
+    :func:`_finite_difference_jacobian` : The internal function used for FD Jacobian when `jac_func` is None.
 
     """
     n = p0.shape[0]
@@ -266,35 +284,24 @@ def levenberg_marquardt_core(
     y_hat = func(p, *args)  # Call func with p and *args
     m = y_hat.shape[0]  # m is length of the function output
 
+    if weights is None:
+        W_arr = np.ones(m, dtype=y_hat.dtype)
+    else:
+        if weights.shape[0] != m:
+            raise ValueError(
+                f"Length of `weights` ({weights.shape[0]}) must match length of `target_y` ({m})."
+            )
+        W_arr = weights.copy()
+
     if target_y is None:
-        # If target_y is None, func's output is treated as the residuals
-        residuals_are_func_output = True
-        res = y_hat
-        if weights is None:
-            W_arr = np.ones(m, dtype=p0.dtype)
-        else:
-            if weights.shape[0] != m:
-                raise ValueError(
-                    f"Length of `weights` ({weights.shape[0]}) must match length of `func` output ({m}) when `target_y` is None."
-                )
-            W_arr = weights.copy()
+        target_y = np.zeros_like(y_hat)
     else:
         # If target_y is provided, residuals = target_y - func(p, *args)
         if target_y.shape[0] != m:
             raise ValueError(
                 f"Length of `target_y` ({target_y.shape[0]}) must match length of `func` output ({m})."
             )
-
-        residuals_are_func_output = False
-        res = target_y - y_hat
-        if weights is None:
-            W_arr = np.ones(m, dtype=target_y.dtype)
-        else:
-            if weights.shape[0] != m:
-                raise ValueError(
-                    f"Length of `weights` ({weights.shape[0]}) must match length of `target_y` ({m})."
-                )
-            W_arr = weights.copy()
+    res = target_y - y_hat
 
     # Calculate initial Chi-squared and JtWres
     W_res = W_arr * res
@@ -302,15 +309,15 @@ def levenberg_marquardt_core(
     if jac_func is not None:
         J = jac_func(p, *args)  # Pass *args
     else:
-        J = _lm_finite_difference_jacobian(
+        J = _finite_difference_jacobian(
             func, p, y_hat, args, dp_ratio
         )  # Pass func, p, y_hat, args
 
     if W_arr.ndim == 1:
         W_J = W_arr[:, np.newaxis] * J  # Apply weights to Jacobian
     else:
-        # This branch would be for a 2D weight matrix, which is not currently supported by weights_1d
-        # but theoretically possible if W_arr was 2D. Let's keep the existing logic.
+        # NOTE: This branch would be for a 2D weight matrix, which is not currently supported
+        # by weights_1d but theoretically possible if W_arr was 2D. Let's keep the existing logic.
         W_J = W_arr * J
 
     JtWJ = J.T @ W_J
@@ -320,7 +327,7 @@ def levenberg_marquardt_core(
     current_max_grad = np.max(np.abs(JtWres))  # Check initial gradient
     if current_max_grad < tol_g:
         converged = True
-        n_iter_final = 0
+        n_iter = 0
         final_cov_p = np.full((n, n), np.nan, dtype=p.dtype)
         try:
             if (m - n > 0) and np.any(np.abs(JtWJ) > _EPS):
@@ -329,27 +336,24 @@ def levenberg_marquardt_core(
                 final_cov_p = np.full((n, n), np.inf, dtype=p.dtype)
         except Exception:
             final_cov_p = np.full((n, n), np.inf, dtype=p.dtype)
-        return p, final_cov_p, chi2, n_iter_final, converged
+        return p, final_cov_p, chi2, n_iter, converged
     else:
         converged = False
 
-    lambda_val: float
+    lambda_val: float = lambda_0_factor
     if use_marquardt_damping:
-        diag_JtWJ_init = np.diag(JtWJ)
-        diag_JtWJ_init_stable = diag_JtWJ_init + _EPS * (diag_JtWJ_init == 0.0)
-        max_diag_val = np.max(diag_JtWJ_init_stable)
-        lambda_val = (
-            lambda_0_factor * max_diag_val if max_diag_val > _EPS else lambda_0_factor
-        )
-    else:
-        lambda_val = lambda_0_factor
+        diag_JtWJ = np.diag(JtWJ)
+        diag_JtWJ_stable = diag_JtWJ + _EPS * (diag_JtWJ == 0.0)
+        max_diag_val = np.max(diag_JtWJ_stable)
+        if max_diag_val > _EPS:
+            lambda_val = lambda_0_factor * max_diag_val
 
     if lambda_val <= 0.0 or not np.isfinite(lambda_val):
-        lambda_val = 1e-2
+        lambda_val = LAMBDA_DEFAULT
 
-    n_iter_final = 0
+    n_iter = 0
     for k_iter_loop in range(max_iter):
-        n_iter_final = k_iter_loop + 1
+        n_iter = k_iter_loop + 1
 
         chi2_at_iter_start = chi2
 
@@ -361,21 +365,22 @@ def levenberg_marquardt_core(
         else:
             A = JtWJ + lambda_val * np.eye(n, dtype=JtWJ.dtype)
 
-        dp_step: npt.NDArray[np.float64]
+        dp_step: npt.NDArray[np.float64 | np.floating] | None = None
         try:
             dp_step = np.linalg.solve(A, JtWres)  # Solve with JtWres (gradient)
         except Exception:
-            lambda_val *= lambda_up_factor
-            lambda_val = np.minimum(lambda_val, 1e15)
-            if lambda_val > 1e12:
-                converged = False
-                break
-            continue
+            dp_step = None
+            # lambda_val *= lambda_up_factor
+            # lambda_val = np.minimum(lambda_val, 1e15)
+            # if lambda_val > 1e12:
+            #     converged = False
+            #     break
+            # continue
 
-        if not np.all(np.isfinite(dp_step)):
+        if dp_step is None or not np.all(np.isfinite(dp_step)):
             lambda_val *= lambda_up_factor
-            lambda_val = np.minimum(lambda_val, 1e15)
-            if lambda_val > 1e12:
+            lambda_val = np.minimum(lambda_val, LAMBDA_MAX)
+            if lambda_val > LAMBDA_CHECK:
                 converged = False
                 break
             continue
@@ -385,33 +390,31 @@ def levenberg_marquardt_core(
 
         if not np.all(np.isfinite(y_hat_try)):
             lambda_val *= lambda_up_factor
-            lambda_val = np.minimum(lambda_val, 1e15)
-            if lambda_val > 1e12:
+            lambda_val = np.minimum(lambda_val, LAMBDA_MAX)
+            if lambda_val > LAMBDA_CHECK:
                 converged = False
                 break
             continue
 
         # Calculate residuals for trial step
-        if residuals_are_func_output:
-            res_try = y_hat_try
-        else:
-            res_try = target_y - y_hat_try
+        res_try = target_y - y_hat_try
 
         W_res_try = W_arr * res_try
         chi2_try = np.sum(W_res_try**2)
 
         if chi2_try < chi2_at_iter_start:
+            # Success - accept the step
             lambda_val /= lambda_down_factor
             lambda_val = np.maximum(lambda_val, 1e-15)
 
             p = p_try
             chi2 = chi2_try
-            y_hat = y_hat_try  # Update y_hat for next iteration's calculations
+            y_hat = y_hat_try
 
             if jac_func is not None:
                 J = jac_func(p, *args)  # Pass *args
             else:
-                J = _lm_finite_difference_jacobian(
+                J = _finite_difference_jacobian(
                     func, p, y_hat, args, dp_ratio
                 )  # Pass func, p, y_hat, args
 
@@ -421,46 +424,40 @@ def levenberg_marquardt_core(
                 W_J = W_arr * J
             JtWJ = J.T @ W_J
             # Recalculate JtWres with updated p and y_hat
-            if residuals_are_func_output:
-                res = y_hat
-            else:
-                res = target_y - y_hat
+            res = target_y - y_hat
             JtWres = J.T @ (W_arr * res)
 
-            current_max_grad_after_step = np.max(np.abs(JtWres))
-            if current_max_grad_after_step < tol_g:
+            # Check maximum gradient
+            if np.max(np.abs(JtWres)) < tol_g:
                 converged = True
                 break
 
+            # Check convergence based on relative change in Chi-squared
             dChi2_this_step = chi2_at_iter_start - chi2
             rel_dChi2_this_step = (
                 dChi2_this_step / chi2_at_iter_start
                 if chi2_at_iter_start > _EPS
                 else 0.0
             )
-            if (
-                n_iter_final > 1
-                and chi2_at_iter_start > _EPS
-                and rel_dChi2_this_step < tol_c
-            ):
+            if n_iter > 1 and chi2_at_iter_start > _EPS and rel_dChi2_this_step < tol_c:
                 converged = True
                 break
 
-            rel_dp_for_step = np.abs(dp_step) / (np.abs(p_try) + _EPS)
-            max_rel_dp_this_step = np.max(rel_dp_for_step)
-            if max_rel_dp_this_step < tol_p:
+            # Check convergence based on relative change in parameters
+            if np.max(np.abs(dp_step) / (np.abs(p_try) + _EPS)) < tol_p:
                 converged = True
                 break
 
         else:
+            # Reject the step
             lambda_val *= lambda_up_factor
-            lambda_val = np.minimum(lambda_val, 1e15)
-            if lambda_val > 1e12:
+            lambda_val = np.minimum(lambda_val, LAMBDA_MAX)
+            if lambda_val > LAMBDA_CHECK:
                 converged = False
                 break
             continue
 
-    if not converged and n_iter_final == max_iter:
+    if not converged and n_iter == max_iter:
         current_max_grad_at_max_iter = np.max(np.abs(JtWres))
         if current_max_grad_at_max_iter < tol_g:
             converged = True
@@ -468,14 +465,13 @@ def levenberg_marquardt_core(
     final_cov_p = np.full((n, n), np.inf, dtype=p.dtype)
     try:
         dof = m - n
-        if dof > 0:
-            if np.any(np.abs(JtWJ) > _EPS):
-                final_cov_p = np.linalg.inv(JtWJ)
+        if dof > 0 and np.any(np.abs(JtWJ) > _EPS):
+            final_cov_p = np.linalg.inv(JtWJ)
         # else: leave as np.inf (dof <= 0)
     except Exception:
         final_cov_p = np.full((n, n), np.inf, dtype=p.dtype)
 
-    return p, final_cov_p, chi2, n_iter_final, converged
+    return p, final_cov_p, chi2, n_iter, converged
 
 
 @jit(nopython=True, parallel=True, cache=True, fastmath=True)
@@ -499,7 +495,7 @@ def levenberg_marquardt_pixelwise(
     npt.NDArray[np.float64],
     npt.NDArray[np.float64],
     npt.NDArray[np.float64],
-    npt.NDArray[np.int_],
+    npt.NDArray[np.int64],
     npt.NDArray[np.bool_],
 ]:
     """
@@ -589,7 +585,7 @@ def levenberg_marquardt_pixelwise(
         (rows, cols, num_params, num_params), np.nan, dtype=p0_global.dtype
     )
     chi2_results = np.full((rows, cols), np.nan, dtype=p0_global.dtype)
-    n_iter_results = np.zeros((rows, cols), dtype=np.int32)
+    n_iter_results = np.zeros((rows, cols), dtype=np.int64)
     converged_results = np.zeros((rows, cols), dtype=np.bool_)
 
     for flat_idx in prange(rows * cols):
