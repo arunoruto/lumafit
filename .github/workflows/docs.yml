@@ -28,7 +28,7 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Setup | Export requirements
-        run: uv export --no-hashes --only-group docs > ./docs/requirements.txt
+        run: uv export --no-hashes --group docs > ./docs/requirements.txt
 
       - id: deployment
         uses: sphinx-notes/pages@v3
@@ -36,3 +36,4 @@ jobs:
           checkout: false
           cache: true
           documentation_path: ./docs/source
+          pyproject_extras: ""
