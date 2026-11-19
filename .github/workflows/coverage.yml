@@ -11,7 +11,7 @@ jobs:
   deepsource-coverage-reporter:
     runs-on: ubuntu-latest
     name: DeepSource coverage reporter
-    needs: unittest
+    needs: testing
     steps:
       - name: Download artifact
         uses: actions/download-artifact@v4
@@ -28,7 +28,7 @@ jobs:
   codecov-coverage-reporter:
     runs-on: ubuntu-latest
     name: CodeCov coverage reporter
-    needs: unittest
+    needs: testing
     steps:
       - name: Download artifact
         uses: actions/download-artifact@v4

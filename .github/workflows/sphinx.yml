@@ -5,10 +5,11 @@ on:
   push:
     paths:
       - "docs/**/*"
+      - "src/**/*"
       - ".github/workflows/sphinx.yml"
 
 concurrency:
-  group: ${{ github.ref }}
+  group: ${{ github.ref }}-${{ github.workflow }}
   cancel-in-progress: true
 
 jobs:
@@ -21,13 +22,13 @@ jobs:
       - name: Setup | Install uv
         uses: astral-sh/setup-uv@v4
 
-      - name: Setup | Export requirements
-        run: uv sync --only-group docs
+      - name: Setup | Install the package and the docs dependencies
+        run: uv sync --group docs
 
       - name: Build | Run Makefile
         run: |
           cd docs
-          uv run sphinx-build -M html ./source ./build
+          uv run sphinx-build -M html ./source ./build -W --keep-going
 
       - name: Deploy | Create artifact of website
         id: deployment

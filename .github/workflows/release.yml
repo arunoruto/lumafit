@@ -1,44 +1,35 @@
 name: Continuous Delivery
-
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   testing:
     uses: ./.github/workflows/test.yml
-
   semantic-versioning-release:
     name: Upload release to PyPI
     runs-on: ubuntu-latest
     needs:
       - testing
-
     concurrency:
-      group: ${{ github.workflow }}-release-${{ github.ref_name }}
+      group: ${{ github.ref }}-${{ github.workflow }}
       cancel-in-progress: false
     environment:
       name: pypi
-      url: https://pypi.org/p/lmba
+      url: https://pypi.org/p/${{ github.event.repository.name }} # NOTE: needs to be changed maybe
     permissions:
       id-token: write
       contents: write
-
     steps:
       - name: Setup | Checkout Repository on Release Branch
         uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
           fetch-depth: 0
-
       - name: Setup | Force release branch to be at workflow sha
         run: git reset --hard ${{ github.sha }}
-
       - name: Setup | Install uv
         uses: astral-sh/setup-uv@v4
-
       - name: Evaluate | Verify upstream has NOT changed
         shell: bash
         run: |
@@ -70,24 +61,22 @@ jobs:
           fi
 
           printf '%s\n' "Verified upstream branch has not changed, continuing with release..."
-
       - name: Action | Semantic Version Release
         id: release
-        uses: python-semantic-release/python-semantic-release@v9.21.0
+        uses: python-semantic-release/python-semantic-release@v10
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           git_committer_name: "github-actions"
           git_committer_email: "actions@users.noreply.github.com"
-
+      - name: Build | Create Dist Artifacts
+        if: steps.release.outputs.released == 'true'
+        run: uv build
       - name: Publish | Upload to GitHub Release Assets
-        uses: python-semantic-release/publish-action@v9.21.0
+        uses: python-semantic-release/publish-action@v10
         if: steps.release.outputs.released == 'true'
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ steps.release.outputs.tag }}
-
       - name: Publish | Build and Publish to PyPI
         if: steps.release.outputs.released == 'true'
-        run: |
-          # uv build --no-sources
-          uv publish
+        run: uv publish
