@@ -8,6 +8,11 @@ performance acceleration via Numba :cite:p:`lam2015numba` JIT compilation
 and parallel execution.
 It is particularly suited for fitting large numbers of curves, such as
 pixel-wise fitting in 3D image data.
+
+`fit_curve` fits one curve and `fit_cube` every pixel of an image cube,
+both for models that return a whole curve. `fit_cube_pointwise` fits a
+cube with a model that computes one sample at a time, on the CPU or on a
+GPU.
 """
 
 from collections.abc import Callable
@@ -17,13 +22,10 @@ import numpy as np
 import numpy.typing as npt
 from numba import jit, prange
 
-from lumafit.pointwise import make_pixelwise_fitter
+from lumafit._result import FitResult
+from lumafit.pointwise import fit_cube_pointwise
 
-__all__ = [
-    "levenberg_marquardt_core",
-    "levenberg_marquardt_pixelwise",
-    "make_pixelwise_fitter",
-]
+__all__ = ["FitResult", "fit_cube", "fit_cube_pointwise", "fit_curve"]
 __version__ = version(__package__) if __package__ else "0.0.0"
 
 _EPS = np.finfo(float).eps
@@ -33,16 +35,16 @@ _LAMBDA_MAX = 1e12
 # pixels and non-finite model output have to stay detectable.
 _FASTMATH = {"reassoc", "nsz", "arcp", "contract", "afn"}
 
-# Model:    func(p, *args) -> y_hat (m,), or the residuals if no target is given
-# Jacobian: jac_func(p, *args) -> J (m, n)
-# Both must be Numba nopython functions defined with `*args`.
+# Model:    model(p, *args) -> y_hat (m,), or the residuals if no data is given
+# Jacobian: jac(p, *args) -> J (m, n)
+# Both must be Numba nopython functions.
 ModelFunc = Callable[..., npt.NDArray[np.float64]]
 JacobianFunc = Callable[..., npt.NDArray[np.float64]]
 
 
 @jit(nopython=True, cache=True, fastmath=_FASTMATH)
 def _finite_difference_jacobian(
-    func: ModelFunc,
+    model: ModelFunc,
     p: npt.NDArray[np.float64],
     y_hat: npt.NDArray[np.float64],
     args: tuple = (),
@@ -57,14 +59,14 @@ def _finite_difference_jacobian(
 
     Parameters
     ----------
-    func : callable
-        Model function ``func(p, *args)``.
+    model : callable
+        Model function ``model(p, *args)``.
     p : numpy.ndarray
         Parameters at which to differentiate, shape ``(n,)``.
     y_hat : numpy.ndarray
         Model output at `p`, shape ``(m,)``.
     args : tuple, optional
-        Extra arguments passed to `func`.
+        Extra arguments passed to `model`.
     dp_ratio : float, default 1e-8
         Relative step; parameter ``j`` is perturbed by
         ``dp_ratio * (1 + abs(p[j]))``.
@@ -80,27 +82,27 @@ def _finite_difference_jacobian(
     for j in range(n):
         step = dp_ratio * (1.0 + abs(p[j]))
         p_step[j] = p[j] + step
-        J[:, j] = (func(p_step, *args) - y_hat) / step
+        J[:, j] = (model(p_step, *args) - y_hat) / step
         p_step[j] = p[j]
     return J
 
 
 @jit(nopython=True, cache=True, fastmath=_FASTMATH)
-def _normal_equations(func, jac_func, p, y_hat, res, w, args, dp_ratio):
+def _normal_equations(model, jac, p, y_hat, res, w, args, dp_ratio):
     """Return ``J^T W J`` and the gradient ``J^T W res`` at `p`."""
-    if jac_func is None:
-        J = _finite_difference_jacobian(func, p, y_hat, args, dp_ratio)
+    if jac is None:
+        J = _finite_difference_jacobian(model, p, y_hat, args, dp_ratio)
     else:
-        J = jac_func(p, *args)
+        J = jac(p, *args)
     WJ = w[:, np.newaxis] * J
     return J.T @ WJ, WJ.T @ res
 
 
 @jit(nopython=True, cache=True, fastmath=_FASTMATH)
-def levenberg_marquardt_core(
-    func: ModelFunc,
+def fit_curve(
+    model: ModelFunc,
     p0: npt.NDArray[np.float64],
-    target_y: npt.NDArray[np.float64] | None = None,
+    y: npt.NDArray[np.float64] | None = None,
     weights: npt.NDArray[np.float64] | None = None,
     max_iter: int = 100,
     tol_g: float = 1e-8,
@@ -109,30 +111,31 @@ def levenberg_marquardt_core(
     lambda_0_factor: float = 1e-2,
     dp_ratio: float = 1e-8,
     use_marquardt_damping: bool = True,
-    jac_func: JacobianFunc | None = None,
+    jac: JacobianFunc | None = None,
     args: tuple = (),
-) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], float, int, bool]:
+) -> FitResult:
     r"""
     Fit a single curve with the Levenberg-Marquardt algorithm.
 
     Minimizes the weighted sum of squared residuals
-    ``sum(weights * (target_y - func(p, *args))**2)``. This is the
-    single-fit routine behind `levenberg_marquardt_pixelwise`.
+    ``sum(weights * (y - model(p, *args))**2)``. Being a Numba nopython
+    function, it can also be called from other compiled code.
 
     Parameters
     ----------
-    func : callable
-        Model ``y_hat = func(p, *args)``, a Numba nopython function
-        defined with ``*args`` that returns a 1D float64 array. If
-        `target_y` is None, its output is taken as the residuals.
+    model : callable
+        Model ``y_hat = model(p, *args)``, a Numba nopython function
+        that returns a 1D float64 array, e.g. ``def model(p, t)`` for
+        ``args=(t,)``. If `y` is None, its output is taken as the
+        residuals.
     p0 : numpy.ndarray
-        Initial guess for the parameters, shape ``(n,)``, float64.
-    target_y : numpy.ndarray, optional
-        Data to fit, shape ``(m,)``, float64. If None, ``func`` itself
-        is minimized.
+        Initial guess for the parameters, shape ``(n,)``.
+    y : numpy.ndarray, optional
+        Data to fit, shape ``(m,)``. If None, the output of `model`
+        itself is minimized.
     weights : numpy.ndarray, optional
-        Weights, shape ``(m,)``, float64; typically ``1 / sigma**2``.
-        Uniform weights are used if None.
+        Weights, shape ``(m,)``; typically ``1 / sigma**2``. Uniform
+        weights are used if None.
     max_iter : int, default 100
         Maximum number of iterations (trial steps).
     tol_g : float, default 1e-8
@@ -148,44 +151,37 @@ def levenberg_marquardt_core(
         Initial damping. Used as is with Marquardt damping and scaled by
         the largest diagonal element of ``J^T W J`` otherwise.
     dp_ratio : float, default 1e-8
-        Relative step of the finite difference Jacobian, see
-        `_finite_difference_jacobian`. Unused if `jac_func` is given.
+        Relative step of the finite difference Jacobian; parameter ``j``
+        is perturbed by ``dp_ratio * (1 + abs(p[j]))``. Unused if `jac`
+        is given.
     use_marquardt_damping : bool, default True
         Damp with ``lambda * diag(J^T W J)``, which makes the step
         invariant to the scale of the parameters
         :cite:p:`marquardt1963algorithm`. If False, damp with
         ``lambda * I`` :cite:p:`levenberg1944method`.
-    jac_func : callable, optional
-        Analytical Jacobian ``J = jac_func(p, *args)`` returning a
-        float64 array of shape ``(m, n)``; a Numba nopython function
-        defined with ``*args``. Forward differences are used if None.
+    jac : callable, optional
+        Analytical Jacobian ``J = jac(p, *args)`` returning a float64
+        array of shape ``(m, n)``; a Numba nopython function. Forward
+        differences are used if None.
     args : tuple, optional
-        Extra arguments passed to `func` and `jac_func`, e.g. the
+        Extra arguments passed to `model` and `jac`, e.g. the
         independent variable.
 
     Returns
     -------
-    p_fit : numpy.ndarray
-        Fitted parameters, shape ``(n,)``.
-    cov_p : numpy.ndarray
-        ``(J^T W J)^-1``, shape ``(n, n)``. Filled with ``inf`` if the
-        matrix is singular or ``m <= n``.
-    chi2 : float
-        Final weighted sum of squared residuals.
-    n_iter : int
-        Number of iterations performed.
-    converged : bool
-        Whether one of the tolerances was met within `max_iter`.
+    FitResult
+        The named tuple ``(p, cov, chi2, n_iter, converged)``, see
+        `FitResult`.
 
     Raises
     ------
     ValueError
-        If the length of `target_y` or `weights` does not match the
-        output of `func`.
+        If the length of `y` or `weights` does not match the output of
+        `model`.
 
     See Also
     --------
-    levenberg_marquardt_pixelwise : Fit every pixel of an image cube.
+    fit_cube : Fit every pixel of an image cube.
 
     Notes
     -----
@@ -198,31 +194,29 @@ def levenberg_marquardt_core(
     :cite:t:`gavin2020levenberg`; :cite:t:`more1978levenbergmarquardt`
     describes the trust-region variant implemented in MINPACK.
 
-    `cov_p` is the parameter covariance if `weights` are inverse
+    ``cov`` is the parameter covariance if `weights` are inverse
     variances. For an unweighted fit, multiply it by the reduced
-    chi-squared ``chi2 / (m - n)`` :cite:p:`gavin2020levenberg`. When the fit stops on `tol_p` or
-    `tol_c`, `cov_p` is evaluated one (tiny) step before `p_fit`, which
-    saves a Jacobian evaluation.
+    chi-squared ``chi2 / (m - n)`` :cite:p:`gavin2020levenberg`. When
+    the fit stops on `tol_p` or `tol_c`, ``cov`` is evaluated one (tiny)
+    step before ``p``, which saves a Jacobian evaluation.
 
     Examples
     --------
     >>> import numpy as np
     >>> from numba import njit
-    >>> from lumafit import levenberg_marquardt_core
+    >>> from lumafit import fit_curve
     >>> @njit
-    ... def decay(p, *args):
-    ...     return p[0] * np.exp(-args[0] / p[1])
+    ... def decay(p, t):
+    ...     return p[0] * np.exp(-t / p[1])
     >>> t = np.linspace(0.0, 5.0, 50)
     >>> y = decay(np.array([3.0, 1.5]), t)
-    >>> p_fit, cov, chi2, n_iter, converged = levenberg_marquardt_core(
-    ...     decay, np.array([1.0, 1.0]), y, args=(t,)
-    ... )
-    >>> np.round(p_fit, 6)
-    array([3. , 1.5])
+    >>> result = fit_curve(decay, np.array([1.0, 1.0]), y, args=(t,))
+    >>> np.round(result.p, 6), result.converged
+    (array([3. , 1.5]), True)
     """
     n = p0.shape[0]
-    p = p0.copy()
-    y_hat = func(p, *args)
+    p = p0.astype(np.float64)
+    y_hat = model(p, *args)
     m = y_hat.shape[0]
 
     if weights is None:
@@ -230,19 +224,21 @@ def levenberg_marquardt_core(
     else:
         if weights.shape[0] != m:
             raise ValueError(
-                f"Length of `weights` ({weights.shape[0]}) must match length of `func` output ({m})."
+                f"Length of `weights` ({weights.shape[0]}) must match length of `model` output ({m})."
             )
-        w = weights
-    if target_y is None:
-        target_y = np.zeros_like(y_hat)
-    elif target_y.shape[0] != m:
-        raise ValueError(
-            f"Length of `target_y` ({target_y.shape[0]}) must match length of `func` output ({m})."
-        )
+        w = np.asarray(weights, np.float64)
+    if y is None:
+        target = np.zeros(m, dtype=np.float64)
+    else:
+        if y.shape[0] != m:
+            raise ValueError(
+                f"Length of `y` ({y.shape[0]}) must match length of `model` output ({m})."
+            )
+        target = np.asarray(y, np.float64)
 
-    res = target_y - y_hat
+    res = target - y_hat
     chi2 = np.sum(w * res * res)
-    JtWJ, g = _normal_equations(func, jac_func, p, y_hat, res, w, args, dp_ratio)
+    JtWJ, g = _normal_equations(model, jac, p, y_hat, res, w, args, dp_ratio)
 
     lam = lambda_0_factor
     if not use_marquardt_damping:
@@ -269,8 +265,8 @@ def levenberg_marquardt_core(
         rel_chi2_decrease = 1.0
         if np.all(np.isfinite(dp)):
             p_try = p + dp
-            y_try = func(p_try, *args)
-            res_try = target_y - y_try
+            y_try = model(p_try, *args)
+            res_try = target - y_try
             chi2_try = np.sum(w * res_try * res_try)
             # Decrease of chi2 predicted by the damped quadratic model
             predicted = np.sum(dp * (lam * D * dp + g))
@@ -297,7 +293,7 @@ def levenberg_marquardt_core(
             converged = True
             break
 
-        JtWJ, g = _normal_equations(func, jac_func, p, y_hat, res, w, args, dp_ratio)
+        JtWJ, g = _normal_equations(model, jac, p, y_hat, res, w, args, dp_ratio)
         converged = np.max(np.abs(g)) < tol_g
 
     cov_p = np.full((n, n), np.inf, dtype=p.dtype)
@@ -307,15 +303,15 @@ def levenberg_marquardt_core(
         except Exception:  # singular matrix
             cov_p = np.full((n, n), np.inf, dtype=p.dtype)
 
-    return p, cov_p, chi2, n_iter, converged
+    return FitResult(p, cov_p, chi2, n_iter, converged)
 
 
 @jit(nopython=True, parallel=True, cache=True, fastmath=_FASTMATH)
-def levenberg_marquardt_pixelwise(
-    func: ModelFunc,
-    p0_global: npt.NDArray[np.float64],
-    target_y_3d: npt.NDArray[np.float64],
-    weights_1d: npt.NDArray[np.float64] | None = None,
+def fit_cube(
+    model: ModelFunc,
+    p0: npt.NDArray[np.float64],
+    cube: npt.NDArray[np.float64],
+    weights: npt.NDArray[np.float64] | None = None,
     max_iter: int = 100,
     tol_g: float = 1e-8,
     tol_p: float = 1e-8,
@@ -323,106 +319,87 @@ def levenberg_marquardt_pixelwise(
     lambda_0_factor: float = 1e-2,
     dp_ratio: float = 1e-8,
     use_marquardt_damping: bool = True,
-    jac_func: JacobianFunc | None = None,
-    args_for_each_pixel: tuple = (),
-) -> tuple[
-    npt.NDArray[np.float64],
-    npt.NDArray[np.float64],
-    npt.NDArray[np.float64],
-    npt.NDArray[np.int64],
-    npt.NDArray[np.bool_],
-]:
+    jac: JacobianFunc | None = None,
+    args: tuple = (),
+) -> FitResult:
     """
     Fit every pixel of an image cube in parallel.
 
-    Each curve ``target_y_3d[r, c, :]`` is fitted independently with
-    `levenberg_marquardt_core`, spread over all Numba threads.
+    Each curve ``cube[r, c, :]`` is fitted independently with
+    `fit_curve`, spread over all Numba threads.
 
     Parameters
     ----------
-    func : callable
-        Model ``y_hat = func(p, *args)``, see
-        `levenberg_marquardt_core`.
-    p0_global : numpy.ndarray
-        Initial guess used for every pixel, shape ``(n,)``, float64.
-    target_y_3d : numpy.ndarray
-        Data to fit, shape ``(rows, cols, m)``, float64. Pixels that
-        contain a NaN are skipped.
-    weights_1d : numpy.ndarray, optional
-        Weights shared by all pixels, shape ``(m,)``, float64.
+    model : callable
+        Model ``y_hat = model(p, *args)``, see `fit_curve`.
+    p0 : numpy.ndarray
+        Initial guess used for every pixel, shape ``(n,)``.
+    cube : numpy.ndarray
+        Data to fit, shape ``(rows, cols, m)``. Pixels that contain a
+        NaN are skipped.
+    weights : numpy.ndarray, optional
+        Weights shared by all pixels, shape ``(m,)``.
     max_iter, tol_g, tol_p, tol_c, lambda_0_factor, dp_ratio
-        See `levenberg_marquardt_core`.
-    use_marquardt_damping, jac_func
-        See `levenberg_marquardt_core`.
-    args_for_each_pixel : tuple, optional
-        Extra arguments passed to `func` and `jac_func`; the same tuple
-        is used for every pixel.
+        See `fit_curve`.
+    use_marquardt_damping, jac
+        See `fit_curve`.
+    args : tuple, optional
+        Extra arguments passed to `model` and `jac`; the same tuple is
+        used for every pixel.
 
     Returns
     -------
-    p_results : numpy.ndarray
-        Fitted parameters, shape ``(rows, cols, n)``. NaN for skipped
-        pixels.
-    cov_p_results : numpy.ndarray
-        Covariance matrices, shape ``(rows, cols, n, n)``. NaN for
-        skipped pixels.
-    chi2_results : numpy.ndarray
-        Final chi-squared, shape ``(rows, cols)``. NaN for skipped
-        pixels.
-    n_iter_results : numpy.ndarray
-        Iterations per pixel, shape ``(rows, cols)``. 0 for skipped
-        pixels.
-    converged_results : numpy.ndarray
-        Convergence flag per pixel, shape ``(rows, cols)``. False for
-        skipped pixels.
+    FitResult
+        The named tuple ``(p, cov, chi2, n_iter, converged)`` with
+        shapes ``(rows, cols, n)``, ``(rows, cols, n, n)`` and three
+        times ``(rows, cols)``, see `FitResult`.
 
     See Also
     --------
-    levenberg_marquardt_core : The underlying single-curve fit.
+    fit_curve : The underlying single-curve fit.
+    fit_cube_pointwise : The same fit on a GPU, for pointwise models.
 
     Notes
     -----
-    The first call compiles the solver for the given `func` and takes a
-    few seconds; later calls reuse the compiled code. The number of
-    threads is controlled with ``numba.set_num_threads``.
+    The first call compiles the solver for the given `model` and takes
+    around ten seconds; later calls reuse the compiled code. The number
+    of threads is controlled with ``numba.set_num_threads``.
 
     Examples
     --------
     >>> import numpy as np
     >>> from numba import njit
-    >>> from lumafit import levenberg_marquardt_pixelwise
+    >>> from lumafit import fit_cube
     >>> @njit
-    ... def decay(p, *args):
-    ...     return p[0] * np.exp(-args[0] / p[1])
+    ... def decay(p, t):
+    ...     return p[0] * np.exp(-t / p[1])
     >>> t = np.linspace(0.0, 5.0, 50)
     >>> cube = np.tile(decay(np.array([3.0, 1.5]), t), (4, 4, 1))
-    >>> p, cov, chi2, n_iter, converged = levenberg_marquardt_pixelwise(
-    ...     decay, np.array([1.0, 1.0]), cube, args_for_each_pixel=(t,)
-    ... )
-    >>> p.shape, bool(converged.all())
+    >>> result = fit_cube(decay, np.array([1.0, 1.0]), cube, args=(t,))
+    >>> result.p.shape, bool(result.converged.all())
     ((4, 4, 2), True)
     """
-    rows, cols, _ = target_y_3d.shape
-    n = p0_global.shape[0]
+    rows, cols, _ = cube.shape
+    n = p0.shape[0]
 
-    p_results = np.full((rows, cols, n), np.nan, dtype=p0_global.dtype)
-    cov_p_results = np.full((rows, cols, n, n), np.nan, dtype=p0_global.dtype)
-    chi2_results = np.full((rows, cols), np.nan, dtype=p0_global.dtype)
+    p_results = np.full((rows, cols, n), np.nan, dtype=np.float64)
+    cov_p_results = np.full((rows, cols, n, n), np.nan, dtype=np.float64)
+    chi2_results = np.full((rows, cols), np.nan, dtype=np.float64)
     n_iter_results = np.zeros((rows, cols), dtype=np.int64)
     converged_results = np.zeros((rows, cols), dtype=np.bool_)
 
     for flat_idx in prange(rows * cols):
         r = flat_idx // cols
         c = flat_idx % cols
-        pixel_target_y = target_y_3d[r, c, :]
-        if np.any(np.isnan(pixel_target_y)):  # masked pixel
+        pixel_y = cube[r, c, :]
+        if np.any(np.isnan(pixel_y)):  # masked pixel
             continue
 
-        p_fit, cov_p, chi2, n_iter, converged = levenberg_marquardt_core(
-            func,
-            p0_global,
-            target_y=pixel_target_y,
-            weights=weights_1d,
+        p_fit, cov_p, chi2, n_iter, converged = fit_curve(
+            model,
+            p0,
+            y=pixel_y,
+            weights=weights,
             max_iter=max_iter,
             tol_g=tol_g,
             tol_p=tol_p,
@@ -430,8 +407,8 @@ def levenberg_marquardt_pixelwise(
             lambda_0_factor=lambda_0_factor,
             dp_ratio=dp_ratio,
             use_marquardt_damping=use_marquardt_damping,
-            jac_func=jac_func,
-            args=args_for_each_pixel,
+            jac=jac,
+            args=args,
         )
 
         p_results[r, c, :] = p_fit
@@ -439,4 +416,6 @@ def levenberg_marquardt_pixelwise(
         chi2_results[r, c] = chi2
         n_iter_results[r, c] = n_iter
         converged_results[r, c] = converged
-    return p_results, cov_p_results, chi2_results, n_iter_results, converged_results
+    return FitResult(
+        p_results, cov_p_results, chi2_results, n_iter_results, converged_results
+    )

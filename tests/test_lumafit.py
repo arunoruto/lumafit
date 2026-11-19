@@ -9,7 +9,7 @@ function against known solutions and SciPy's implementation.
 import numpy as np
 import numpy.testing as npt
 import pytest
-from lumafit import _EPS, levenberg_marquardt_core, levenberg_marquardt_pixelwise
+from lumafit import _EPS, FitResult, fit_cube, fit_curve
 from numba import jit
 from scipy.optimize import least_squares
 
@@ -295,12 +295,12 @@ def test_no_noise(data_fixture_name, request):
 
     lumafit_args_additional = (d["t"],)  # `t_data` is now in `args` tuple
 
-    p_fit, cov, chi2, iters, conv = levenberg_marquardt_core(
-        func=d["model"],
+    p_fit, cov, chi2, iters, conv = fit_curve(
+        model=d["model"],
         p0=p_initial,  # p0 is first explicit arg
-        target_y=d["y_clean"],  # Pass y_clean as target_y
+        y=d["y_clean"],  # Pass y_clean as target_y
         weights=None,
-        jac_func=None,
+        jac=None,
         args=lumafit_args_additional,  # Pass args_additional
         **core_lm_params,  # Pass parameters from the dictionary using **
     )
@@ -347,12 +347,12 @@ def test_with_noise_vs_scipy(data_fixture_name, request):
 
     lumafit_args_additional = (d["t"],)  # `t_data` is now in `args` tuple for models
 
-    p_fit_lmba, _, chi2_lmba, iters_lmba, conv_lmba = levenberg_marquardt_core(
-        func=d["model"],
+    p_fit_lmba, _, chi2_lmba, iters_lmba, conv_lmba = fit_curve(
+        model=d["model"],
         p0=p_initial,  # p0 is first explicit arg
-        target_y=y_noisy,  # Pass y_noisy as target_y
+        y=y_noisy,  # Pass y_noisy as target_y
         weights=weights_arr,
-        jac_func=None,
+        jac=None,
         args=lumafit_args_additional,  # Pass args_additional
         **core_lm_params,  # Pass parameters from the dictionary using **
     )
@@ -422,13 +422,13 @@ def test_pixelwise_fitting(exp_decay_data_dict):
         t_data_common,
     )  # Common `t` is always the first in this tuple
 
-    p_res, cov_res, chi2_res, n_iter_res, conv_res = levenberg_marquardt_pixelwise(
-        func=d["model"],
-        p0_global=p0_global,  # p0 is first explicit arg
-        target_y_3d=y_data_3d,
-        weights_1d=None,
-        jac_func=None,
-        args_for_each_pixel=lumafit_args_for_each_pixel_empty,
+    p_res, cov_res, chi2_res, n_iter_res, conv_res = fit_cube(
+        model=d["model"],
+        p0=p0_global,  # p0 is first explicit arg
+        cube=y_data_3d,
+        weights=None,
+        jac=None,
+        args=lumafit_args_for_each_pixel_empty,
         **core_lm_pixel_params,  # Pass parameters from the dictionary using **
     )
 
@@ -473,12 +473,12 @@ def test_singular_jacobian_case():
 
     lumafit_args_additional = (t_data,)  # `t_data` is now in `args` tuple
 
-    p_fit, cov, chi2, iters, conv = levenberg_marquardt_core(
-        func=model_constant,
+    p_fit, cov, chi2, iters, conv = fit_curve(
+        model=model_constant,
         p0=p_initial,  # p0 is first explicit arg
-        target_y=y_data,
+        y=y_data,
         weights=None,
-        jac_func=None,
+        jac=None,
         args=lumafit_args_additional,  # Pass args_additional
         **core_lm_params_strict,  # Pass parameters from the dictionary using **
     )
@@ -518,12 +518,12 @@ def test_weights_effect_vs_scipy(exp_decay_data_dict):
 
     lumafit_args_additional = (d["t"],)  # `t_data` is now in `args` tuple for models
 
-    p_fit_lmba_w, _, chi2_lmba_w, iters_lmba_w, conv_lmba_w = levenberg_marquardt_core(
-        func=d["model"],
+    p_fit_lmba_w, _, chi2_lmba_w, iters_lmba_w, conv_lmba_w = fit_curve(
+        model=d["model"],
         p0=p_initial_test,  # p0 is first explicit arg
-        target_y=y_noisy,
+        y=y_noisy,
         weights=weights_arr,
-        jac_func=None,
+        jac=None,
         args=lumafit_args_additional,
         **core_lm_params,  # Pass parameters from the dictionary using **
     )
@@ -560,12 +560,12 @@ def test_weights_effect_vs_scipy(exp_decay_data_dict):
     )
 
     p_fit_lmba_nw, _, chi2_lmba_nw, iters_lmba_nw, conv_lmba_nw = (
-        levenberg_marquardt_core(
-            func=d["model"],
+        fit_curve(
+            model=d["model"],
             p0=p_initial_test,  # p0 is first explicit arg
-            target_y=y_noisy,
+            y=y_noisy,
             weights=None,
-            jac_func=None,
+            jac=None,
             args=lumafit_args_additional,
             **core_lm_params,  # Pass parameters from the dictionary using **
         )
@@ -617,12 +617,12 @@ def test_analytic_jacobian_vs_fd_vs_scipy(data_fixture_name, request):
         chi2_lmba_analytic,
         iters_lmba_analytic,
         conv_lmba_analytic,
-    ) = levenberg_marquardt_core(
-        func=d["model"],
+    ) = fit_curve(
+        model=d["model"],
         p0=p_initial,  # p0 is first explicit arg
-        target_y=y_noisy,
+        y=y_noisy,
         weights=weights_arr,
-        jac_func=jac_analytic_func,
+        jac=jac_analytic_func,
         args=lumafit_args_additional,
         **core_lm_params_analytic,  # Pass parameters from the dictionary using **
     )
@@ -635,12 +635,12 @@ def test_analytic_jacobian_vs_fd_vs_scipy(data_fixture_name, request):
         core_lm_params_fd["dp_ratio"] = 1e-7
 
     p_fit_lmba_fd, _, chi2_lmba_fd, iters_lmba_fd, conv_lmba_fd = (
-        levenberg_marquardt_core(
-            func=d["model"],
+        fit_curve(
+            model=d["model"],
             p0=p_initial,  # p0 is first explicit arg
-            target_y=y_noisy,
+            y=y_noisy,
             weights=weights_arr,
-            jac_func=None,
+            jac=None,
             args=lumafit_args_additional,
             **core_lm_params_fd,  # Pass parameters from the dictionary using **
         )
@@ -712,9 +712,9 @@ def test_fd_covariance_matches_analytic(exp_decay_data_dict):
     d = exp_decay_data_dict
     y, p0, args = _noisy_decay(d), d["p_true"] * 0.9, (d["t"],)
 
-    p_fd, cov_fd, *_ = levenberg_marquardt_core(d["model"], p0, y, args=args)
-    p_an, cov_an, *_ = levenberg_marquardt_core(
-        d["model"], p0, y, jac_func=d["jac_analytic"], args=args
+    p_fd, cov_fd, *_ = fit_curve(d["model"], p0, y, args=args)
+    p_an, cov_an, *_ = fit_curve(
+        d["model"], p0, y, jac=d["jac_analytic"], args=args
     )
 
     npt.assert_allclose(p_fd, p_an, rtol=1e-6)
@@ -727,7 +727,7 @@ def test_weighted_fit_matches_scipy_tightly(exp_decay_data_dict):
     y, p0, t = _noisy_decay(d), d["p_true"] * 0.9, d["t"]
     w = np.linspace(1.0, 100.0, y.shape[0])
 
-    p_fit, _, chi2, _, conv = levenberg_marquardt_core(
+    p_fit, _, chi2, _, conv = fit_curve(
         d["model"], p0, y, weights=w, args=(t,)
     )
     ref = least_squares(
@@ -748,8 +748,8 @@ def test_residual_function_without_target(exp_decay_data_dict):
     def residuals(p, *args):
         return model_exponential_decay(p, args[0]) - args[1]
 
-    p_res, *_ = levenberg_marquardt_core(residuals, p0, args=(t, y))
-    p_fit, *_ = levenberg_marquardt_core(d["model"], p0, y, args=(t,))
+    p_res, *_ = fit_curve(residuals, p0, args=(t, y))
+    p_fit, *_ = fit_curve(d["model"], p0, y, args=(t,))
 
     npt.assert_allclose(p_res, p_fit, rtol=1e-6)
 
@@ -760,8 +760,8 @@ def test_pixelwise_skips_nan_pixels(exp_decay_data_dict):
     cube = np.tile(_noisy_decay(d), (2, 2, 1))
     cube[0, 1, 5] = np.nan
 
-    p, cov, chi2, n_iter, conv = levenberg_marquardt_pixelwise(
-        d["model"], d["p_true"] * 0.9, cube, args_for_each_pixel=(d["t"],)
+    p, cov, chi2, n_iter, conv = fit_cube(
+        d["model"], d["p_true"] * 0.9, cube, args=(d["t"],)
     )
 
     assert np.isnan(p[0, 1]).all() and np.isnan(cov[0, 1]).all()
@@ -774,7 +774,49 @@ def test_pixelwise_skips_nan_pixels(exp_decay_data_dict):
 def test_converges_in_few_iterations(exp_decay_data_dict):
     """Guards the damping strategy: this fit takes MINPACK about 6 steps."""
     d = exp_decay_data_dict
-    *_, n_iter, conv = levenberg_marquardt_core(
+    *_, n_iter, conv = fit_curve(
         d["model"], d["p_true"] * 0.9, _noisy_decay(d), args=(d["t"],)
     )
     assert conv and n_iter <= 10
+
+
+# --- API ---
+
+
+@jit(nopython=True)
+def decay_plain(p, t):
+    """A model with ordinary parameters instead of ``*args``."""
+    return p[0] * np.exp(-t / p[1]) + p[2] * np.exp(-t / p[3])
+
+
+def test_results_are_named_and_unpackable(exp_decay_data_dict):
+    d = exp_decay_data_dict
+    y, args = _noisy_decay(d), (d["t"],)
+
+    result = fit_curve(decay_plain, d["p_true"] * 0.9, y, args=args)
+    assert isinstance(result, FitResult)
+    p, cov, chi2, n_iter, converged = result
+    assert result.p is p and result.cov is cov
+    assert (result.chi2, result.n_iter, result.converged) == (chi2, n_iter, converged)
+
+    cube = fit_cube(decay_plain, d["p_true"] * 0.9, np.tile(y, (2, 2, 1)), args=args)
+    assert isinstance(cube, FitResult)
+    npt.assert_allclose(cube.p[1, 1], p)
+    assert cube.converged.all() and cube.n_iter.shape == (2, 2)
+
+
+@pytest.mark.parametrize("dtype", [np.int64, np.float32])
+def test_accepts_other_input_dtypes(exp_decay_data_dict, dtype):
+    """An integer or single precision guess is fitted in float64."""
+    d = exp_decay_data_dict
+    p0 = np.array([4, 2, 2, 9], dtype=dtype)
+    y, args = _noisy_decay(d), (d["t"],)
+
+    reference = fit_curve(decay_plain, p0.astype(np.float64), y, args=args)
+    result = fit_curve(decay_plain, p0, y, args=args)
+    assert result.p.dtype == np.float64 and result.converged
+    npt.assert_allclose(result.p, reference.p, rtol=1e-12)
+
+    cube = fit_cube(decay_plain, p0, np.tile(y, (2, 2, 1)).astype(np.float32), args=args)
+    assert cube.p.dtype == np.float64 and cube.converged.all()
+    npt.assert_allclose(cube.p[0, 0], reference.p, rtol=1e-4)

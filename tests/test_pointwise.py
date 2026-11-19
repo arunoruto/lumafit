@@ -7,7 +7,7 @@ import numpy.testing as npt
 import pytest
 from numba import njit
 
-from lumafit import levenberg_marquardt_pixelwise, make_pixelwise_fitter
+from lumafit import FitResult, fit_cube, fit_cube_pointwise
 
 P_TRUE = np.array([5.0, 2.0, 2.0, 10.0])
 P0 = np.array([4.0, 1.5, 1.5, 8.0])
@@ -40,9 +40,7 @@ def cube():
 @pytest.fixture(scope="module")
 def reference(cube):
     """The array solver's result for the same weighted fit."""
-    return levenberg_marquardt_pixelwise(
-        decay_array, P0, cube, weights_1d=WEIGHTS, args_for_each_pixel=(T,)
-    )
+    return fit_cube(decay_array, P0, cube, weights=WEIGHTS, args=(T,))
 
 
 def vulkan_device():
@@ -74,9 +72,8 @@ def check(result, reference, rtol_p, rtol_cov):
     [(np.float64, 1e-5, 1e-3), (np.float32, 5e-3, 5e-2)],
 )
 def test_cpu_matches_array_solver(cube, reference, dtype, rtol_p, rtol_cov):
-    fit = make_pixelwise_fitter(decay, 4, dtype)
-    result = fit(P0, cube, T, weights_1d=WEIGHTS)
-    assert result[0].dtype == dtype
+    result = fit_cube_pointwise(decay, P0, cube, T, weights=WEIGHTS, dtype=dtype)
+    assert isinstance(result, FitResult) and result.p.dtype == dtype
     check(result, reference, rtol_p, rtol_cov)
 
 
@@ -88,19 +85,36 @@ def test_vulkan_matches_array_solver(cube, reference, dtype, rtol_p, rtol_cov):
     device = vulkan_device()
     if dtype == np.float64 and not device.float64:
         pytest.skip(f"{device.name} has no float64")
-    fit = make_pixelwise_fitter(decay, 4, dtype, target="vulkan")
-    result = fit(P0, cube, T, weights_1d=WEIGHTS, device=device.index)
-    assert result[0].dtype == dtype
+    result = fit_cube_pointwise(
+        decay,
+        P0,
+        cube,
+        T,
+        weights=WEIGHTS,
+        target="vulkan",
+        device=device.index,
+        dtype=dtype,
+    )
+    assert result.p.dtype == dtype
     check(result, reference, rtol_p, rtol_cov)
+
+
+def test_precision_follows_the_data(cube):
+    """A float32 cube is fitted in float32 unless a dtype is given."""
+    single = cube.astype(np.float32)
+    assert fit_cube_pointwise(decay, P0, single, T).p.dtype == np.float32
+    assert (
+        fit_cube_pointwise(decay, P0, single, T, dtype=np.float64).p.dtype == np.float64
+    )
+    assert fit_cube_pointwise(decay, list(P0), cube, list(T)).p.dtype == np.float64
 
 
 def test_rejects_bad_arguments(cube):
     with pytest.raises(ValueError, match="target"):
-        make_pixelwise_fitter(decay, 4, target="cuda")
+        fit_cube_pointwise(decay, P0, cube, T, target="cuda")
     with pytest.raises(ValueError, match="dtype"):
-        make_pixelwise_fitter(decay, 4, dtype=np.int32)
-    fit = make_pixelwise_fitter(decay, 4)
+        fit_cube_pointwise(decay, P0, cube, T, dtype=np.int32)
     with pytest.raises(ValueError, match="p0"):
-        fit(P0[:3], cube, T)
+        fit_cube_pointwise(decay, P0.reshape(2, 2), cube, T)
     with pytest.raises(ValueError, match="one per sample"):
-        fit(P0, cube, T[:-1])
+        fit_cube_pointwise(decay, P0, cube, T[:-1])

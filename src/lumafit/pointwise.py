@@ -7,10 +7,13 @@ CPU threads (:cite:p:`lam2015numba`) and, through numba-vulkan, for any GPU
 with a Vulkan driver.
 """
 
+import functools
 import math
 
 import numpy as np
 from numba import njit, prange
+
+from lumafit._result import FitResult
 
 TARGETS = ("cpu", "vulkan")
 
@@ -88,7 +91,7 @@ def _make_core(model, n, dtype):
 
     @njit
     def fit_one(y, x, w, p, cov, max_iter, tol_g, tol_p, tol_c, lam, dp_ratio):
-        """Fit one curve in place of `p`; the algorithm of the array solver."""
+        """Fit one curve in place of `p`; the algorithm of `lumafit.fit_curve`."""
         A = np.empty((n, n), F)
         L = np.empty((n, n), F)
         g = np.empty(n, F)
@@ -167,87 +170,9 @@ def _make_core(model, n, dtype):
     return fit_one
 
 
-def make_pixelwise_fitter(model, n_params, dtype=np.float64, target="cpu"):
-    """
-    Compile a pixel-wise Levenberg-Marquardt fit for a pointwise model.
-
-    Unlike `lumafit.levenberg_marquardt_pixelwise`, the model computes one
-    sample at a time. In exchange the fit runs on a GPU, compiles in a
-    second or two and is a little faster on the CPU as well.
-
-    Parameters
-    ----------
-    model : callable
-        ``model(p, x) -> float``, a function compiled with ``numba.njit``
-        that returns the model value for the parameters `p` (1D array of
-        length `n_params`) at one sample ``x`` of the independent
-        variable.
-    n_params : int
-        Number of parameters.
-    dtype : {numpy.float64, numpy.float32}, optional
-        Precision of the computation. Most GPUs are several times faster
-        in float32, where results agree with float64 to about 1e-4.
-    target : {'cpu', 'vulkan'}, optional
-        Run on all Numba threads, or on a Vulkan device through
-        numba-vulkan (``pip install lumafit[vulkan]``).
-
-    Returns
-    -------
-    callable
-        ``fit(p0, target_y_3d, x, weights_1d=None, max_iter=100,
-        tol_g=None, tol_p=None, tol_c=None, lambda_0_factor=1e-2,
-        dp_ratio=None, device=None)``. It fits every
-        ``target_y_3d[r, c, :]`` and returns ``(p, cov, chi2, n_iter,
-        converged)`` with the shapes of
-        `lumafit.levenberg_marquardt_pixelwise`, in `dtype`. `x` holds
-        one entry per sample along its first axis. The tolerances and
-        `dp_ratio` default to the square root of the machine precision
-        of `dtype`. `device` selects the Vulkan device by index or name;
-        the default is the first discrete GPU.
-
-    Raises
-    ------
-    ValueError
-        If `target` or `dtype` is not one of the supported values.
-
-    See Also
-    --------
-    lumafit.levenberg_marquardt_pixelwise : The same fit for array models.
-
-    Notes
-    -----
-    The algorithm is that of `lumafit.levenberg_marquardt_core` with
-    Marquardt damping and a forward difference Jacobian; an analytical
-    Jacobian is not supported. Pixels that contain a NaN are skipped.
-
-    In a float32 fit every operation of the model has to stay in
-    float32: a Python literal such as ``0.5 * p[0]`` promotes the
-    expression to float64, which numba-vulkan reports with a warning.
-    Use typed constants (``HALF = np.float32(0.5)``) instead.
-
-    Examples
-    --------
-    >>> import math
-    >>> import numpy as np
-    >>> from numba import njit
-    >>> from lumafit import make_pixelwise_fitter
-    >>> @njit
-    ... def decay(p, t):
-    ...     return p[0] * math.exp(-t / p[1])
-    >>> t = np.linspace(0.0, 5.0, 50)
-    >>> cube = np.tile(3.0 * np.exp(-t / 1.5), (4, 4, 1))
-    >>> fit = make_pixelwise_fitter(decay, 2)
-    >>> p, cov, chi2, n_iter, converged = fit(np.array([1.0, 1.0]), cube, t)
-    >>> np.round(p[0, 0], 6), bool(converged.all())
-    (array([3. , 1.5]), True)
-    """
-    dtype = np.dtype(dtype).type
-    if dtype not in (np.float64, np.float32):
-        raise ValueError(f"dtype must be float64 or float32, not {dtype.__name__}")
-    if target not in TARGETS:
-        raise ValueError(f"target must be one of {TARGETS}, not {target!r}")
-
-    n = int(n_params)
+@functools.lru_cache(maxsize=None)
+def _compile(model, n, dtype, target):
+    """Compile the cube fit for one model, size, precision and target."""
     fit_one = _make_core(model, n, dtype)
 
     if target == "cpu":
@@ -265,79 +190,177 @@ def make_pixelwise_fitter(model, n_params, dtype=np.float64, target="cpu"):
             run(*inputs, *outputs, *scalars)
             return outputs
 
-    else:
-        import numba_vulkan as nv
+        return launch
 
-        @nv.jit
-        def kernel(
-            Y, x, w, p0, P, cov, chi2, n_iter, conv, max_iter, tg, tp, tc, lam, h
-        ):
-            i = nv.global_id(0)
-            if i < Y.shape[0]:
-                for a in range(n):
-                    P[i, a] = p0[a]
-                chi2[i], n_iter[i], conv[i] = fit_one(
-                    Y[i], x, w, P[i], cov[i], max_iter, tg, tp, tc, lam, h
-                )
+    import numba_vulkan as nv
 
-        def launch(device, inputs, outputs, scalars):
-            # Explicit device arrays: handing NumPy arrays to the kernel makes
-            # numba-vulkan upload the outputs too and is several times slower.
-            on_device = [
-                nv.device_array(o.shape, o.dtype, device=device) for o in outputs
-            ]
-            kernel.forall(inputs[0].shape[0], device=device)(
-                *(nv.to_device(i, device=device) for i in inputs), *on_device, *scalars
+    @nv.jit
+    def kernel(Y, x, w, p0, P, cov, chi2, n_iter, conv, max_iter, tg, tp, tc, lam, h):
+        i = nv.global_id(0)
+        if i < Y.shape[0]:
+            for a in range(n):
+                P[i, a] = p0[a]
+            chi2[i], n_iter[i], conv[i] = fit_one(
+                Y[i], x, w, P[i], cov[i], max_iter, tg, tp, tc, lam, h
             )
-            return [d.copy_to_host(o) for d, o in zip(on_device, outputs, strict=True)]
 
-    default_tol = math.sqrt(np.finfo(dtype).eps)
-
-    def fit(
-        p0,
-        target_y_3d,
-        x,
-        weights_1d=None,
-        max_iter=100,
-        tol_g=None,
-        tol_p=None,
-        tol_c=None,
-        lambda_0_factor=1e-2,
-        dp_ratio=None,
-        device=None,
-    ):
-        rows, cols, m = target_y_3d.shape
-        n_pixels = rows * cols
-        Y = np.ascontiguousarray(target_y_3d, dtype).reshape(n_pixels, m)
-        w = (
-            np.ones(m, dtype)
-            if weights_1d is None
-            else np.ascontiguousarray(weights_1d, dtype)
+    def launch(device, inputs, outputs, scalars):
+        # Explicit device arrays: handing NumPy arrays to the kernel makes
+        # numba-vulkan upload the outputs too and is several times slower.
+        on_device = [nv.device_array(o.shape, o.dtype, device=device) for o in outputs]
+        kernel.forall(inputs[0].shape[0], device=device)(
+            *(nv.to_device(i, device=device) for i in inputs), *on_device, *scalars
         )
-        p0 = np.ascontiguousarray(p0, dtype)
-        if p0.shape != (n,):
-            raise ValueError(f"p0 must have shape ({n},), not {p0.shape}")
-        if w.shape != (m,) or len(x) != m:
-            raise ValueError(f"x and weights_1d need {m} entries, one per sample")
+        return [d.copy_to_host(o) for d, o in zip(on_device, outputs, strict=True)]
 
-        outputs = [
-            np.empty((n_pixels, n), dtype),  # p
-            np.empty((n_pixels, n, n), dtype),  # cov
-            np.empty(n_pixels, dtype),  # chi2
-            np.empty(n_pixels, np.int32),  # n_iter
-            np.empty(n_pixels, np.bool_),  # converged
-        ]
-        tols = [dtype(default_tol if t is None else t) for t in (tol_g, tol_p, tol_c)]
-        step = dtype(default_tol if dp_ratio is None else dp_ratio)
-        scalars = (np.int32(max_iter), *tols, dtype(lambda_0_factor), step)
-        inputs = (Y, np.ascontiguousarray(x, dtype), w, p0)
-        P, cov, chi2, n_iter, conv = launch(device, inputs, outputs, scalars)
-        return (
-            P.reshape(rows, cols, n),
-            cov.reshape(rows, cols, n, n),
-            chi2.reshape(rows, cols),
-            n_iter.reshape(rows, cols),
-            conv.reshape(rows, cols),
-        )
+    return launch
 
-    return fit
+
+def fit_cube_pointwise(
+    model,
+    p0,
+    cube,
+    x,
+    weights=None,
+    max_iter=100,
+    tol_g=None,
+    tol_p=None,
+    tol_c=None,
+    lambda_0_factor=1e-2,
+    dp_ratio=None,
+    *,
+    target="cpu",
+    device=None,
+    dtype=None,
+):
+    """
+    Fit every pixel of an image cube with a pointwise model.
+
+    Unlike `lumafit.fit_cube`, the model computes one sample at a time.
+    In exchange the fit can run on a GPU, compiles in a second or two
+    and is a little faster on the CPU as well.
+
+    Parameters
+    ----------
+    model : callable
+        ``model(p, x) -> float``, a function compiled with
+        ``numba.njit`` that returns the model value for the parameters
+        `p` at one sample ``x`` of the independent variable.
+    p0 : array_like
+        Initial guess used for every pixel, shape ``(n,)``.
+    cube : numpy.ndarray
+        Data to fit, shape ``(rows, cols, m)``. Pixels that contain a
+        NaN are skipped.
+    x : array_like
+        Independent variable, with one entry per sample along its first
+        axis; `model` receives ``x[k]``.
+    weights : array_like, optional
+        Weights shared by all pixels, shape ``(m,)``.
+    max_iter : int, default 100
+        Maximum number of iterations per pixel.
+    tol_g, tol_p, tol_c : float, optional
+        Convergence tolerances, see `lumafit.fit_curve`. They default
+        to the square root of the machine precision of `dtype`.
+    lambda_0_factor : float, default 1e-2
+        Initial damping.
+    dp_ratio : float, optional
+        Relative step of the finite difference Jacobian. Defaults to
+        the square root of the machine precision of `dtype`.
+    target : {'cpu', 'vulkan'}, optional
+        Run on all Numba threads, or on a Vulkan device through
+        numba-vulkan (``pip install lumafit[vulkan]``).
+    device : int or str, optional
+        Vulkan device by index or part of its name; the first discrete
+        GPU by default. See ``numba_vulkan.list_devices``.
+    dtype : {numpy.float64, numpy.float32}, optional
+        Precision of the computation. Defaults to float32 for a
+        float32 `cube` and to float64 otherwise. Most GPUs are several
+        times faster in float32, where results agree with float64 to
+        about 1e-4.
+
+    Returns
+    -------
+    lumafit.FitResult
+        The named tuple ``(p, cov, chi2, n_iter, converged)`` with the
+        shapes of `lumafit.fit_cube`, in `dtype`; ``n_iter`` is int32.
+
+    Raises
+    ------
+    ValueError
+        If `target` or `dtype` is not supported, or the shapes of `p0`,
+        `x` or `weights` do not fit `cube`.
+
+    See Also
+    --------
+    lumafit.fit_cube : The same fit for models that return whole curves.
+
+    Notes
+    -----
+    The algorithm is that of `lumafit.fit_curve` with Marquardt damping
+    and a forward difference Jacobian; an analytical Jacobian is not
+    supported. The solver is compiled on the first call for a given
+    `model`, number of parameters, `dtype` and `target`, and reused
+    afterwards.
+
+    In a float32 fit every operation of the model has to stay in
+    float32: a Python literal such as ``0.5 * p[0]`` promotes the
+    expression to float64, which numba-vulkan reports with a warning.
+    Use typed constants (``HALF = np.float32(0.5)``) instead.
+
+    Examples
+    --------
+    >>> import math
+    >>> import numpy as np
+    >>> from numba import njit
+    >>> from lumafit import fit_cube_pointwise
+    >>> @njit
+    ... def decay(p, t):
+    ...     return p[0] * math.exp(-t / p[1])
+    >>> t = np.linspace(0.0, 5.0, 50)
+    >>> cube = np.tile(3.0 * np.exp(-t / 1.5), (4, 4, 1))
+    >>> result = fit_cube_pointwise(decay, [1.0, 1.0], cube, t)
+    >>> np.round(result.p[0, 0], 6), bool(result.converged.all())
+    (array([3. , 1.5]), True)
+    """
+    cube = np.asarray(cube)
+    if dtype is None:
+        dtype = np.float32 if cube.dtype == np.float32 else np.float64
+    dtype = np.dtype(dtype).type
+    if dtype not in (np.float64, np.float32):
+        raise ValueError(f"dtype must be float64 or float32, not {dtype.__name__}")
+    if target not in TARGETS:
+        raise ValueError(f"target must be one of {TARGETS}, not {target!r}")
+
+    rows, cols, m = cube.shape
+    n_pixels = rows * cols
+    p0 = np.ascontiguousarray(p0, dtype)
+    x = np.ascontiguousarray(x, dtype)
+    w = np.ones(m, dtype) if weights is None else np.ascontiguousarray(weights, dtype)
+    if p0.ndim != 1:
+        raise ValueError(f"p0 must be one-dimensional, not of shape {p0.shape}")
+    if w.shape != (m,) or len(x) != m:
+        raise ValueError(f"x and weights need {m} entries, one per sample")
+    n = p0.shape[0]
+
+    default = math.sqrt(np.finfo(dtype).eps)
+    tols = [dtype(default if t is None else t) for t in (tol_g, tol_p, tol_c)]
+    step = dtype(default if dp_ratio is None else dp_ratio)
+    scalars = (np.int32(max_iter), *tols, dtype(lambda_0_factor), step)
+    inputs = (np.ascontiguousarray(cube, dtype).reshape(n_pixels, m), x, w, p0)
+    outputs = [
+        np.empty((n_pixels, n), dtype),  # p
+        np.empty((n_pixels, n, n), dtype),  # cov
+        np.empty(n_pixels, dtype),  # chi2
+        np.empty(n_pixels, np.int32),  # n_iter
+        np.empty(n_pixels, np.bool_),  # converged
+    ]
+    p, cov, chi2, n_iter, converged = _compile(model, n, dtype, target)(
+        device, inputs, outputs, scalars
+    )
+    return FitResult(
+        p.reshape(rows, cols, n),
+        cov.reshape(rows, cols, n, n),
+        chi2.reshape(rows, cols),
+        n_iter.reshape(rows, cols),
+        converged.reshape(rows, cols),
+    )
