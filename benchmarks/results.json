@@ -1,0 +1,106 @@
+{
+  "meta": {
+    "label": "lumafit (this version)",
+    "pixels": 16384,
+    "samples_per_pixel": 100,
+    "parameters": 4,
+    "threads": 16,
+    "cpu": "Intel(R) Core(TM) i9-9900K CPU @ 3.60GHz",
+    "python": "3.12.7",
+    "numpy": "2.5.5",
+    "numba": "0.68.1",
+    "scipy": "1.18.1"
+  },
+  "rows": [
+    {
+      "problem": "decay",
+      "solver": "scipy least_squares (lm), loop",
+      "seconds": 13.970159231990692,
+      "us_per_fit": 852.6708515619318,
+      "jit_seconds": null,
+      "mean_iterations": null,
+      "converged": null,
+      "median_rel_diff_vs_scipy": null
+    },
+    {
+      "problem": "decay",
+      "solver": "lumafit (this version), 1 thread",
+      "seconds": 0.8259311879955931,
+      "us_per_fit": 50.41083911105915,
+      "jit_seconds": 13.747762617000262,
+      "mean_iterations": 5.581787109375,
+      "converged": 1.0,
+      "median_rel_diff_vs_scipy": 1.5224162660875662e-08
+    },
+    {
+      "problem": "decay",
+      "solver": "lumafit (this version), 16 threads",
+      "seconds": 0.1384367860009661,
+      "us_per_fit": 8.449510864316778,
+      "jit_seconds": 0.003727921997779049,
+      "mean_iterations": 5.581787109375,
+      "converged": 1.0,
+      "median_rel_diff_vs_scipy": 1.5224162660875662e-08
+    },
+    {
+      "problem": "decay",
+      "solver": "lumafit (this version), 16 threads, analytic J",
+      "seconds": 0.11163739098992664,
+      "us_per_fit": 6.813805602412515,
+      "jit_seconds": 9.317946373019367,
+      "mean_iterations": 5.581787109375,
+      "converged": 1.0,
+      "median_rel_diff_vs_scipy": 1.5177927654948776e-08
+    },
+    {
+      "problem": "decay",
+      "solver": "optimistix LM + jax.vmap (CPU)",
+      "seconds": 3.364550551006687,
+      "us_per_fit": 205.35586859171673,
+      "jit_seconds": 0.4931775659933919,
+      "mean_iterations": null,
+      "converged": null,
+      "median_rel_diff_vs_scipy": 3.5990204164243774e-09
+    },
+    {
+      "problem": "polarization",
+      "solver": "scipy least_squares (lm), loop",
+      "seconds": 16.261693410007865,
+      "us_per_fit": 992.5349981694253,
+      "jit_seconds": null,
+      "mean_iterations": null,
+      "converged": null,
+      "median_rel_diff_vs_scipy": null
+    },
+    {
+      "problem": "polarization",
+      "solver": "lumafit (this version), 1 thread",
+      "seconds": 2.5894370510068256,
+      "us_per_fit": 158.04669500774082,
+      "jit_seconds": 8.937206100992626,
+      "mean_iterations": 6.0994873046875,
+      "converged": 1.0,
+      "median_rel_diff_vs_scipy": 5.3667247016375426e-08
+    },
+    {
+      "problem": "polarization",
+      "solver": "lumafit (this version), 16 threads",
+      "seconds": 0.3526190859993221,
+      "us_per_fit": 21.522161010700813,
+      "jit_seconds": -0.0016321569855790585,
+      "mean_iterations": 6.0994873046875,
+      "converged": 1.0,
+      "median_rel_diff_vs_scipy": 5.3667247016375426e-08
+    },
+    {
+      "problem": "polarization",
+      "solver": "optimistix LM + jax.vmap (CPU)",
+      "seconds": 7.392243212001631,
+      "us_per_fit": 451.1867194825214,
+      "jit_seconds": 0.5890013089956483,
+      "mean_iterations": null,
+      "converged": null,
+      "median_rel_diff_vs_scipy": 1.571356379125978e-08
+    }
+  ]
+}

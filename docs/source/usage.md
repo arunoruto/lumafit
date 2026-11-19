@@ -1,88 +1,140 @@
-# Usage Guide
-
-This section explains how to install and use Lumafit for your fitting tasks.
+# Usage
 
 ## Installation
 
-Install Lumafit using pip:
-
 ```bash
 pip install lumafit
+# or
+uv add lumafit
 ```
 
-## Basic Curve Fitting Example
+## The model function
 
-Here is a simple example demonstrating how to use :py:func:`lumafit.levenberg_marquardt_core`:
+The model is called as `func(p, *args)` and returns the model values as a 1D
+`float64` array. It has to be a Numba nopython function **defined with
+`*args`**; whatever you pass as `args` to the solver arrives there, typically
+the independent variable first.
 
 ```python
 import numpy as np
+from numba import njit
+
+
+@njit
+def decay(p, *args):
+    t = args[0]
+    return p[0] * np.exp(-t / p[1]) + p[2] * np.exp(-t / p[3])
+```
+
+## Fitting a single curve
+
+```python
 from lumafit import levenberg_marquardt_core
-# Assuming model_exponential_decay is accessible, e.g., imported in __init__.py
-from lumafit import model_exponential_decay
 
-# Define some dummy data based on the exponential decay model
-t = np.linspace(0, 10, 50, dtype=np.float64)
-p_true = np.array([10.0, 2.0, 5.0, 0.5], dtype=np.float64)
-# Add some noise
-rng = np.random.default_rng(42)
-y_data = model_exponential_decay(t, p_true) + rng.normal(0, 0.5, size=t.shape).astype(np.float64)
+t = np.linspace(0.1, 25, 100)
+p_true = np.array([5.0, 2.0, 2.0, 10.0])
+y = decay(p_true, t) + np.random.default_rng(0).normal(0, 0.02, t.shape)
 
-# Initial guess for parameters
-p0 = np.array([8.0, 1.5, 6.0, 1.0], dtype=np.float64)
+p0 = np.array([4.0, 1.5, 1.5, 8.0])  # initial guess
 
-# Perform the fit
-p_fit, cov_p, chi2, iters, converged = levenberg_marquardt_core(
-    model_exponential_decay,
-    t,
-    y_data,
-    p0,
-    max_iter=500 # Example of passing optional arguments
+p_fit, cov, chi2, n_iter, converged = levenberg_marquardt_core(
+    decay, p0, y, args=(t,)
 )
-
-print(f"Initial guess: {p0}")
-print(f"True parameters: {p_true}")
-print(f"Fitted parameters: {p_fit}")
-print(f"Fit converged: {converged}")
-print(f"Chi-squared: {chi2:.2f}")
-print(f"Iterations: {iters}")
 ```
 
-## Pixel-wise Fitting
-
-For 3D image data, use :py:func:`lumafit.levenberg_marquardt_pixelwise`:
+`cov` is $(J^T W J)^{-1}$. If `weights` are inverse variances it is the
+parameter covariance; for an unweighted fit scale it by the reduced chi-squared:
 
 ```python
-import numpy as np
-from lumafit import levenberg_marquardt_pixelwise
-from lumafit import model_exponential_decay
-
-# Create dummy 3D data (e.g., 2x2 pixels, 50 data points per pixel)
-rows, cols, depth = 2, 2, 50
-t = np.linspace(0, 10, depth, dtype=np.float64)
-p_true_base = np.array([10.0, 2.0, 5.0, 0.5], dtype=np.float64)
-p0_global = np.array([8.0, 1.5, 6.0, 1.0], dtype=np.float64)
-y_data_3d = np.empty((rows, cols, depth), dtype=np.float64)
-
-rng = np.random.default_rng(43) # New seed for pixel data
-
-for r in range(rows):
-    for c in range(cols):
-        # Slightly vary true params per pixel
-        p_pixel_true = p_true_base * (1 + rng.uniform(-0.05, 0.05, size=p_true_base.shape))
-        y_clean_pixel = model_exponential_decay(t, p_pixel_true)
-        noise_pixel = rng.normal(0, 0.2, size=depth).astype(np.float64) # Add noise
-        y_data_3d[r, c, :] = y_clean_pixel + noise_pixel
-
-# Perform pixel-wise fit
-p_results, cov_results, chi2_results, n_iter_results, converged_results = levenberg_marquardt_pixelwise(
-    model_exponential_decay,
-    t,
-    y_data_3d,
-    p0_global,
-    max_iter=200
-)
-
-print("Fitted parameters (first pixel):", p_results[0, 0, :])
-print("Convergence status (all pixels):\n", converged_results)
-print("Chi-squared values (all pixels):\n", chi2_results)
+sigma = np.sqrt(np.diag(cov) * chi2 / (y.size - p_fit.size))
 ```
+
+## Fitting an image cube
+
+{py:func}`lumafit.levenberg_marquardt_pixelwise` fits every
+`cube[row, col, :]` independently and in parallel. Pixels containing a NaN are
+skipped, so NaN doubles as a mask.
+
+```python
+from lumafit import levenberg_marquardt_pixelwise
+
+cube = np.tile(y, (128, 128, 1))  # (rows, cols, samples)
+
+p, cov, chi2, n_iter, converged = levenberg_marquardt_pixelwise(
+    decay, p0, cube, args_for_each_pixel=(t,)
+)
+p.shape  # (128, 128, 4)
+```
+
+The number of threads is set with {py:func}`numba.set_num_threads` or the
+`NUMBA_NUM_THREADS` environment variable.
+
+```{note}
+The first call compiles the solver for your model, which takes around ten
+seconds. Later calls in the same process run at full speed.
+```
+
+## Weights
+
+`weights` (or `weights_1d` for a cube) are multiplied with the squared
+residuals, so pass `1 / sigma**2`:
+
+```python
+sigma = np.full(t.shape, 0.02)
+levenberg_marquardt_core(decay, p0, y, weights=1 / sigma**2, args=(t,))
+```
+
+## Analytical Jacobian
+
+By default the Jacobian is approximated with forward differences, costing one
+model evaluation per parameter and iteration. If you can write it down, pass it
+as `jac_func`; it takes the same arguments as the model and returns an array of
+shape `(samples, parameters)`:
+
+```python
+@njit
+def decay_jac(p, *args):
+    t = args[0]
+    J = np.empty((t.shape[0], 4))
+    e1 = np.exp(-t / p[1])
+    e2 = np.exp(-t / p[3])
+    J[:, 0] = e1
+    J[:, 1] = p[0] * e1 * t / p[1] ** 2
+    J[:, 2] = e2
+    J[:, 3] = p[2] * e2 * t / p[3] ** 2
+    return J
+
+
+levenberg_marquardt_core(decay, p0, y, jac_func=decay_jac, args=(t,))
+```
+
+## Minimizing residuals directly
+
+Without `target_y`, the output of the function is taken as the residual vector,
+as in {py:func}`scipy.optimize.least_squares`:
+
+```python
+@njit
+def residuals(p, *args):
+    t, y = args
+    return p[0] * np.exp(-t / p[1]) - y
+
+
+levenberg_marquardt_core(residuals, np.array([1.0, 1.0]), args=(t, y))
+```
+
+## Algorithm
+
+The solver is a damped Gauss-Newton iteration
+{cite:p}`levenberg1944method,marquardt1963algorithm`. Each step solves
+
+$$
+\left(J^T W J + \lambda \, \operatorname{diag}(J^T W J)\right) \delta = J^T W r
+$$
+
+for the parameter update $\delta$, with residuals $r$ and weights $W$. The
+damping $\lambda$ is adapted from the ratio of the actual to the predicted
+decrease of $\chi^2$ {cite:p}`nielsen1999damping`. A fit has converged when the
+gradient, the relative parameter change or the relative decrease of $\chi^2$
+falls below `tol_g`, `tol_p` or `tol_c`. See
+{cite:t}`nocedal2006numerical` and {cite:t}`gavin2020levenberg` for background.

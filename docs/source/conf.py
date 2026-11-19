@@ -1,8 +1,4 @@
 import datetime
-import sys
-from pathlib import Path
-
-sys.path.insert(0, Path(__file__).parent.parent.parent.absolute().as_posix())
 
 from lumafit import __version__
 
@@ -31,18 +27,19 @@ extensions = [
     "myst_parser",  # For using Markdown files
     "sphinx_copybutton",  # For adding a copy button to code blocks
     "sphinxcontrib.bibtex",  # For bibliography/citations
+    "sphinx.ext.intersphinx",  # Cross-references to Python/NumPy/Numba
 ]
 
 templates_path = ["_templates"]
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
-source_suffix = {".rst": "restructuredtext", ".md": "restructuredtext"}
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "benchmarks/results.md"]
+source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
 
 # -- Extension configurations ------------------------------------------------
 
 # AutoAPI configuration
 # Specify the directories containing the Python code to document.
 # This should point to your source package(s).
-autoapi_dirs = ["../../lumafit"]
+autoapi_dirs = ["../../src/lumafit"]
 autoapi_type = "python"
 autoapi_add_toctree_entry = True  # Add generated API docs to the TOC
 autoapi_generate_api = True  # Generate individual pages for modules, classes, etc.
@@ -138,7 +135,6 @@ inheritance_alias = {}
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = "pydata_sphinx_theme"
-html_static_path = ["_static"]
 html_css_files = []
 # html_show_sourcelink = True
 html_context = dict(
@@ -182,6 +178,6 @@ pygments_style = "sphinx"  # Or 'friendly', 'colorful', 'monokai', etc.
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3/", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
-    "pytest": ("https://docs.pytest.org/en/stable/", None),
-    # Add others like scipy, pandas if you use/reference them
+    "numba": ("https://numba.readthedocs.io/en/stable/", None),
+    "scipy": ("https://docs.scipy.org/doc/scipy/", None),
 }

@@ -1,38 +1,34 @@
 <!-- Improved compatibility of back to top link: See: https://github.com/othneildrew/Best-README-Template/pull/73 -->
-
 <a id="readme-top"></a>
 
 <!-- PROJECT SHIELDS -->
-<!-- Add shields relevant to your project, e.g., build status, PyPI version -->
-
+[![PyPI][pypi-shield]][pypi-url]
 [![Contributors][contributors-shield]][contributors-url]
 [![Forks][forks-shield]][forks-url]
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
-[![License][license-shield]][license-url]
-
-<!-- Optional: [![LinkedIn][linkedin-shield]][linkedin-url] -->
+[![MIT][license-shield]][license-url]
 
 <!-- PROJECT LOGO -->
 <br />
 <div align="center">
-  <!-- Replace with your project logo if you have one -->
-  <!-- <a href="https://github.com/arunoruto/lumafit]"><img src="images/logo.png" alt="Logo" width="80" height="80"></a> -->
+  <a href="https://github.com/arunoruto/lumafit">
+    <img src=".github/logo.png" alt="Logo" width="80" height="80">
+  </a>
 
-  <h3 align="center">lumafit</h3>
+<h3 align="center">lumafit</h3>
 
   <p align="center">
     A Numba-accelerated Levenberg-Marquardt fitting library for Python.
     <br />
     Optimized for pixel-wise fitting on 3D image data.
     <br />
+    <a href="https://arunoruto.github.io/lumafit/"><strong>Explore the docs »</strong></a>
     <br />
-    <!-- Optional: Add links to documentation if you create it later -->
-    <!-- <a href="https://github.com/arunoruto/lumafit]"><strong>Explore the docs »</strong></a> -->
     <br />
-    <a href="https://github.com/arunoruto/lumafit/issues/new?labels=bug&template=bug-report---.md">Report Bug</a>
+    <a href="https://github.com/arunoruto/lumafit/issues/new?labels=bug">Report Bug</a>
     &middot;
-    <a href="https://github.com/arunoruto/lumafit/issues/new?labels=enhancement&template=feature-request---.md">Request Feature</a>
+    <a href="https://github.com/arunoruto/lumafit/issues/new?labels=enhancement">Request Feature</a>
   </p>
 </div>
 
@@ -54,7 +50,8 @@
       </ul>
     </li>
     <li><a href="#usage">Usage</a></li>
-    <li><a href="#tests">Tests</a></li>
+    <li><a href="#performance">Performance</a></li>
+    <li><a href="#development">Development</a></li>
     <li><a href="#roadmap">Roadmap</a></li>
     <li><a href="#contributing">Contributing</a></li>
     <li><a href="#license">License</a></li>
@@ -67,26 +64,36 @@
 
 ## About The Project
 
-This library provides a high-performance implementation of the Levenberg-Marquardt (LM) algorithm for non-linear least squares fitting, accelerated using [Numba](https://numba.pydata.org/).
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/source/benchmarks/benchmark-dark.svg">
+  <img src="docs/source/benchmarks/benchmark-light.svg" alt="Time per fit for lumafit, SciPy and optimistix">
+</picture>
 
-The primary motivation for `lumafit` is to efficiently perform fitting tasks on large multi-dimensional datasets, such as fitting a curve along the third dimension for every pixel in a 3D image stack. Numba's Just-In-Time (JIT) compilation and parallel processing capabilities (`numba.prange`) are leveraged to drastically reduce computation time compared to pure Python implementations.
+`lumafit` fits many small non-linear least squares problems at once, such as
+one curve along the third dimension for every pixel of an image cube. Calling
+`scipy.optimize.least_squares` in a Python loop spends most of its time in the
+interpreter; `lumafit` implements the Levenberg-Marquardt algorithm in
+[Numba](https://numba.pydata.org/), compiles it together with your model and
+runs the fits on all cores.
 
-Key features:
-
-- Core Levenberg-Marquardt algorithm (`levenberg_marquardt_core`).
-- Specialized function for fitting curves pixel-wise on 3D data (`levenberg_marquardt_pixelwise`) with parallel execution.
-- Support for weighted least squares.
-- Numerical Jacobian calculation via finite differences (Numba-accelerated).
-- Implementation based on standard LM algorithm formulations.
+- `levenberg_marquardt_core` fits a single curve.
+- `levenberg_marquardt_pixelwise` fits every pixel of a
+  `(rows, cols, samples)` cube in parallel and skips pixels masked with NaN.
+- Weighted least squares, returning the covariance matrix of the parameters.
+- Finite difference Jacobian by default, analytical Jacobian if you have one.
+- The solver is a nopython function, so it can be called from your own
+  Numba-compiled code.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ### Built With
 
-- [![Python][Python.any]][Python-url]
+- [![Python][Python-shield]][Python-url]
 - [![Numba][Numba-shield]][Numba-url]
 - [![NumPy][NumPy-shield]][NumPy-url]
-- [![SciPy][SciPy-shield]][SciPy-url] (Used in tests for comparison)
+- [![SciPy][SciPy-shield]][SciPy-url]
+- [![uv][uv-shield]][uv-url]
+- [![Nix][Nix-shield]][Nix-url]
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -94,34 +101,28 @@ Key features:
 
 ## Getting Started
 
-To get a local copy of `lumafit` up and running, follow these simple steps.
-
 ### Prerequisites
 
-You need Python 3.9+ installed. Using a virtual environment is recommended.
-You will also need standard Python build tools, typically included with `pip`.
-
-```sh
-python -m venv venv
-source venv/bin/activate # On Linux/macOS
-# venv\Scripts\activate # On Windows
-```
+Python 3.10 or newer. NumPy, Numba and SciPy are installed as dependencies;
+SciPy provides the BLAS/LAPACK routines Numba uses for linear algebra.
 
 ### Installation
 
-1. Clone the repository:
-   ```sh
-   git clone https://github.com/arunoruto/lumafit.git
-   cd lumafit
-   ```
-2. Install the package using `pip`, which will use the `pyproject.toml` file:
-   ```sh
-   pip install .
-   ```
-   If you want to install dependencies required for running tests, use the `[test]` extra:
-   ```sh
-   pip install .[test]
-   ```
+From [PyPI][pypi-url]:
+
+```sh
+pip install lumafit
+# or
+uv add lumafit
+```
+
+From source:
+
+```sh
+git clone https://github.com/arunoruto/lumafit.git
+cd lumafit
+pip install .
+```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -129,165 +130,112 @@ source venv/bin/activate # On Linux/macOS
 
 ## Usage
 
-The library provides two main functions: `levenberg_marquardt_core` for fitting a single curve and `levenberg_marquardt_pixelwise` for fitting a 3D data stack.
-
-First, you need to define your model function. **Your model function must be compatible with Numba's `nopython=True` mode.** This means it should primarily use NumPy functions and basic Python constructs supported by Numba.
+The model is called as `func(p, *args)` and has to be a Numba nopython
+function **defined with `*args`**. Whatever you pass as `args` to the solver
+arrives there, typically the independent variable.
 
 ```python
-# Example model function (exponential decay + another exponential decay)
 import numpy as np
-from numba import jit
+from numba import njit
+from lumafit import levenberg_marquardt_core, levenberg_marquardt_pixelwise
 
-@jit(nopython=True, cache=True)
-def my_model(t, p):
-    """
-    My example non-linear model.
 
-    Args:
-        t (np.ndarray): Independent variable (1D array).
-        p (np.ndarray): Parameters (1D array), e.g., [A1, tau1, A2, tau2].
+@njit
+def decay(p, *args):
+    t = args[0]
+    return p[0] * np.exp(-t / p[1]) + p[2] * np.exp(-t / p[3])
 
-    Returns:
-        np.ndarray: Model output evaluated at t.
-    """
-    # Add checks for potential zero divisors if parameters are in denominators
-    term1 = np.zeros_like(t, dtype=np.float64)
-    if np.abs(p[1]) > 1e-12: # Avoid division by zero or near-zero
-        term1 = p[0] * np.exp(-t / p[1])
 
-    term2 = np.zeros_like(t, dtype=np.float64)
-    if np.abs(p[3]) > 1e-12:
-         term2 = p[2] * np.exp(-t / p[3])
-
-    return term1 + term2
-
-# Or the polarization model:
-# @jit(nopython=True, cache=True)
-# def polarization_model(t, p):
-#     # ... (your polarization model code from tests/lmba.py)
-#     t_rad = t * np.pi / 180.0
-#     p3_rad = p[3] * np.pi / 180.0
-#     sin_t_rad_arr = np.sin(t_rad)
-#     term1_base = sin_t_rad_arr.copy()
-#     mask_problematic_base = (np.abs(term1_base) < 1e-15) & (p[1] < 0.0) # Using a small epsilon
-#     term1_base[mask_problematic_base] = 1e-15 # Replace near-zero with tiny number
-#     term1 = np.power(term1_base, p[1])
-#     term2 = np.power(np.cos(t_rad / 2.0), p[2])
-#     term3 = np.sin(t_rad - p3_rad)
-#     return p[0] * term1 * term2 * term3
+t = np.linspace(0.1, 25, 100)
+p_true = np.array([5.0, 2.0, 2.0, 10.0])
+p0 = np.array([4.0, 1.5, 1.5, 8.0])
+rng = np.random.default_rng(0)
 ```
 
 ### Fitting a single curve
 
-If you have a single 1D array of data (`y_data`) corresponding to independent variable values (`t_data`), you can use `levenberg_marquardt_core`. This function is the core engine for minimizing the difference between your model and the data.
-
 ```python
-import numpy as np
-from lmba import levenberg_marquardt_core
+y = decay(p_true, t) + rng.normal(0, 0.02, t.shape)
 
-# Assume my_model is defined and JIT-compiled above
-
-# Generate some synthetic data (replace with your actual data)
-t_data = np.linspace(0.1, 25, 100, dtype=np.float64)
-p_true = np.array([5.0, 2.0, 2.0, 10.0], dtype=np.float64)
-y_clean = my_model(t_data, p_true)
-noise = np.random.default_rng(42).normal(0, 0.1, size=t_data.shape).astype(np.float64)
-y_data = (y_clean + noise).astype(np.float64)
-
-# Initial guess for parameters
-p_initial = np.array([4.0, 1.5, 1.5, 8.0], dtype=np.float64)
-
-# Optional: weights (e.g., inverse variance if noise std is known)
-weights = 1.0 / (0.1**2 + np.finfo(float).eps) # Assuming noise_std = 0.1
-
-# Run the fit
-p_fit, cov, chi2, iters, conv = levenberg_marquardt_core(
-    my_model,       # Your Numba-compiled model function
-    t_data,         # Independent variable data (1D array)
-    y_data,         # Dependent variable data (1D array)
-    p_initial,      # Initial guess (1D array)
-    weights=weights, # Optional weights (1D array or None)
-    max_iter=1000,  # Max iterations
-    tol_g=1e-7,     # Gradient tolerance
-    tol_p=1e-7,     # Parameter change tolerance
-    tol_c=1e-7,     # Chi-squared change tolerance
-    # ... other optional parameters
+p_fit, cov, chi2, n_iter, converged = levenberg_marquardt_core(
+    decay, p0, y, args=(t,)
 )
-
-print(f"Fit converged: {conv}")
-print(f"Iterations: {iters}")
-print(f"Final Chi-squared: {chi2}")
-print(f"Fitted parameters: {p_fit}")
-# print(f"Covariance matrix: {cov}") # Covariance can be large
 ```
 
 ### Fitting pixel-wise on 3D data
 
-For a 3D NumPy array where each `(row, col)` location has a curve along the third dimension (`data_cube[row, col, :]`), use `levenberg_marquardt_pixelwise`. This function parallelizes the fitting process across the `row` and `col` dimensions using `numba.prange`.
-
 ```python
-import numpy as np
-from lmba import levenberg_marquardt_pixelwise
+cube = decay(p_true, t) + rng.normal(0, 0.02, (128, 128, t.size))
+cube[0, 0, :] = np.nan  # masked pixels are skipped
 
-# Assume my_model is defined and JIT-compiled above
-
-# Generate some synthetic 3D data (replace with your actual data)
-rows, cols, depth = 100, 100, 50 # Example dimensions
-t_data = np.linspace(0.1, 25, depth, dtype=np.float64)
-data_cube = np.empty((rows, cols, depth), dtype=np.float64)
-
-p_true_base = np.array([5.0, 2.0, 2.0, 10.0], dtype=np.float64)
-rng = np.random.default_rng(42)
-
-for r_idx in range(rows):
-    for c_idx in range(cols):
-        # Vary true params slightly per pixel
-        p_pixel_true = p_true_base * (1 + rng.uniform(-0.05, 0.05, size=p_true_base.shape))
-        y_clean_pixel = my_model(t_data, p_pixel_true)
-        noise_pixel = rng.normal(0, 0.1, size=depth).astype(np.float64)
-        data_cube[r_idx,c_idx,:] = (y_clean_pixel + noise_pixel).astype(np.float64)
-
-# Global initial guess for all pixels
-p0_global = np.array([4.0, 1.5, 1.5, 8.0], dtype=np.float64)
-
-# Optional weights (applied to each pixel identically)
-# weights_1d = 1.0 / (0.1**2 + np.finfo(float).eps) # Assuming noise_std = 0.1
-
-# Run the pixel-wise fit (this is parallelized)
-p_results, cov_results, chi2_results, n_iter_results, conv_results = levenberg_marquardt_pixelwise(
-    my_model,        # Your Numba-compiled model function
-    t_data,          # Independent variable (1D array, common for all pixels)
-    data_cube,       # 3D data array (rows x cols x depth)
-    p0_global,       # Global initial guess (1D array)
-    # Optional parameters for the core LM algorithm, passed to each pixel fit
-    # weights_1d=weights_1d,
-    max_iter=500,
-    tol_g=1e-6,
-    tol_p=1e-6,
-    tol_c=1e-6,
-    # ... other optional parameters
+p, cov, chi2, n_iter, converged = levenberg_marquardt_pixelwise(
+    decay, p0, cube, args_for_each_pixel=(t,)
 )
 
-print(f"Pixel-wise fitting finished.")
-print(f"Shape of fitted parameters: {p_results.shape}") # (rows x cols x n_params)
-print(f"Shape of convergence flags: {conv_results.shape}") # (rows x cols)
-print(f"Percentage converged: {np.sum(conv_results) / (rows*cols) * 100.0:.2f}%")
+p.shape           # (128, 128, 4)
+converged.mean()  # fraction of pixels that converged
+```
+
+The first call compiles the solver for your model, which takes around ten
+seconds; after that the 16,384 fits above run in about 0.15 s on 16 threads.
+
+Weights (`1 / sigma**2`), an analytical Jacobian (`jac_func`) and minimizing a
+residual function directly are covered in the
+[Documentation](https://arunoruto.github.io/lumafit/usage.html).
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+<!-- PERFORMANCE -->
+
+## Performance
+
+Time per fit for a 128 × 128 cube with 100 samples per pixel and 4 parameters,
+on an Intel Core i9-9900K (8 cores, 16 threads):
+
+| Solver                                    | Exponential decay | Polarization curve |
+| ----------------------------------------- | ----------------: | -----------------: |
+| `scipy.optimize.least_squares`, loop      |            853 µs |             993 µs |
+| `optimistix.LevenbergMarquardt` + `vmap`  |            205 µs |             451 µs |
+| lumafit 0.2.3, 16 threads                 |           15.4 µs |            32.3 µs |
+| **lumafit, 1 thread**                     |           50.4 µs |             158 µs |
+| **lumafit, 16 threads**                   |            8.4 µs |            21.5 µs |
+| **lumafit, 16 threads, analytic Jacobian** |            6.8 µs |                  – |
+
+All solvers find the same minimum (fitted parameters agree to 1e-7 or better).
+The one-off compilation of about ten seconds per model is not included, so for a
+few hundred curves SciPy is still the quicker choice. Methodology and the full
+table are in the
+[benchmark docs](https://arunoruto.github.io/lumafit/benchmarks.html); to
+reproduce:
+
+```sh
+uv run --group bench python benchmarks/run.py
+uv run --group bench python benchmarks/report.py
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Tests
+<!-- DEVELOPMENT -->
 
-The library includes a test suite using `pytest` to verify the correctness of the core LM algorithm and the pixel-wise function against known solutions (for noiseless data) and against `scipy.optimize.least_squares` (for noisy data).
+## Development
 
-To run the tests:
+The project is managed with [uv](https://docs.astral.sh/uv/):
 
-1.  Ensure you have installed the test dependencies: `pip install .[test]`
-2.  Navigate to the project root directory in your terminal.
-3.  Run pytest:
-    ```sh
-    pytest
-    ```
+```sh
+uv sync --group test --group docs
+uv run pytest                                              # tests and doctests
+uv run sphinx-build -M html docs/source docs/build -W      # documentation
+```
+
+The tests check the solver against known solutions and against
+`scipy.optimize.least_squares`.
+
+On Nix, the flake provides the same environment (loaded automatically with
+direnv):
+
+```sh
+nix develop .#uv2nix
+```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -295,12 +243,14 @@ To run the tests:
 
 ## Roadmap
 
-- [ ] Add support for analytical Jacobian functions (instead of only finite differences).
+- [x] Support analytical Jacobian functions.
+- [x] Nielsen's damping strategy.
+- [x] Documentation and examples.
+- [x] Publish on PyPI.
 - [ ] Implement parameter bounds.
-- [ ] Investigate alternative damping strategies (e.g., Nielsen's method).
 - [ ] Improve robustness for ill-conditioned problems.
-- [ ] Add more detailed documentation and examples.
-- [ ] Potentially publish on PyPI.
+
+See the [open issues](https://github.com/arunoruto/lumafit/issues) for a full list of proposed features (and known issues).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -310,11 +260,15 @@ To run the tests:
 
 Contributions are welcome! If you have suggestions or find bugs, please open an issue or submit a pull request.
 
-1.  Fork the Project
-2.  Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3.  Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4.  Push to the Branch (`git push origin feature/AmazingFeature`)
-5.  Open a Pull Request
+1. Fork the Project
+2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your Changes (`git commit -m 'feat: add some AmazingFeature'`)
+4. Push to the Branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+Releases are cut with
+[python-semantic-release](https://python-semantic-release.readthedocs.io/), so
+commit messages follow [Conventional Commits](https://www.conventionalcommits.org/).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -332,7 +286,7 @@ Distributed under the [MIT License][license-url]. See `LICENSE` for more informa
 
 Mirza Arnaut - mirza.arnaut@tu-dortmund.de
 
-Project Link: https://github.com/arunoruto/lumafit
+Project Link: [https://github.com/arunoruto/lumafit](https://github.com/arunoruto/lumafit)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -340,7 +294,9 @@ Project Link: https://github.com/arunoruto/lumafit
 
 ## Acknowledgments
 
-- The original Levenberg-Marquardt algorithm (see references in `lmba/__init__.py`).
+- Levenberg (1944) and Marquardt (1963) for the algorithm, Nielsen (1999) for
+  the damping update and Gavin (2020) for a very readable description; full
+  [references](https://arunoruto.github.io/lumafit/references.html) are in the docs.
 - [Numba](https://numba.pydata.org/) for providing the acceleration capabilities.
 - [NumPy](https://numpy.org/) and [SciPy](https://scipy.org/) for fundamental numerical computing tools.
 - [pytest](https://docs.pytest.org/) for the testing framework.
@@ -351,6 +307,8 @@ Project Link: https://github.com/arunoruto/lumafit
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
 
+[pypi-shield]: https://img.shields.io/pypi/v/lumafit.svg?style=for-the-badge
+[pypi-url]: https://pypi.org/project/lumafit/
 [contributors-shield]: https://img.shields.io/github/contributors/arunoruto/lumafit.svg?style=for-the-badge
 [contributors-url]: https://github.com/arunoruto/lumafit/graphs/contributors
 [forks-shield]: https://img.shields.io/github/forks/arunoruto/lumafit.svg?style=for-the-badge
@@ -361,14 +319,15 @@ Project Link: https://github.com/arunoruto/lumafit
 [issues-url]: https://github.com/arunoruto/lumafit/issues
 [license-shield]: https://img.shields.io/github/license/arunoruto/lumafit.svg?style=for-the-badge
 [license-url]: https://github.com/arunoruto/lumafit/blob/main/LICENSE
-[linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=for-the-badge&logo=linkedin&colorB=555
-
-[linkedin-url]: https://linkedin.com/in/[your_linkedin_username]
-[Python.any]: https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white
+[Python-shield]: https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white
 [Python-url]: https://www.python.org/
-[Numba-shield]: https://img.shields.io/badge/Numba-00A6FF?style=for-the-badge&logo=numba&logoColor=white
+[Numba-shield]: https://img.shields.io/badge/Numba-00A3E0?style=for-the-badge&logo=numba&logoColor=white
 [Numba-url]: https://numba.pydata.org/
 [NumPy-shield]: https://img.shields.io/badge/NumPy-013243?style=for-the-badge&logo=numpy&logoColor=white
 [NumPy-url]: https://numpy.org/
-[SciPy-shield]: https://img.shields.io/badge/SciPy-8FBC8F?style=for-the-badge&logo=scipy&logoColor=white
+[SciPy-shield]: https://img.shields.io/badge/SciPy-8CAAE6?style=for-the-badge&logo=scipy&logoColor=white
 [SciPy-url]: https://scipy.org/
+[uv-shield]: https://img.shields.io/badge/uv-DE5FE9?style=for-the-badge&logo=uv&logoColor=white
+[uv-url]: https://docs.astral.sh/uv/
+[Nix-shield]: https://img.shields.io/badge/Nix-5277C3?style=for-the-badge&logo=nixos&logoColor=white
+[Nix-url]: https://nixos.org/
