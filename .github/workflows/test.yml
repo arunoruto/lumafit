@@ -24,11 +24,17 @@ jobs:
           path: .venv
           key: ${{ runner.os }}-uv-${{ steps.setup-python.outputs.uv-version }}-env-${{ hashFiles('uv.lock') }}
 
+      # lavapipe, Mesa's CPU Vulkan driver, runs the Vulkan tests without a GPU
+      - name: Install the Vulkan loader and lavapipe
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libvulkan1 mesa-vulkan-drivers
+
       - name: Setup venv for testing & Install dependencies
         if: steps.cache-env.outputs.cache-hit != 'true'
         run: |
           uv venv
-          uv sync --group test
+          uv sync --group test --extra vulkan
 
       # - name: Cache databases
       #   id: cache-databases
@@ -42,7 +48,7 @@ jobs:
       #   run: uv run refidxdb db --download all
 
       - name: Test and coverage report with pytest
-        run: uv run pytest --cov --cov-report xml --junitxml=junit.xml -o junit_family=legacy
+        run: uv run --extra vulkan pytest --cov --cov-report xml --junitxml=junit.xml -o junit_family=legacy
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
