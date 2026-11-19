@@ -14,7 +14,16 @@ keywords = [
   "scientific",
 ]
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.26", "numba>=0.61.0", "scipy>=1.15.3"]
+dependencies = [
+  "numpy>=1.26",
+  "numba>=0.61.0",
+  "scipy>=1.15.3", # Numba needs SciPy's BLAS/LAPACK for np.linalg and `@`
+]
+
+[project.urls]
+Documentation = "https://arunoruto.github.io/lumafit/"
+Repository = "https://github.com/arunoruto/lumafit"
+Changelog = "https://github.com/arunoruto/lumafit/blob/main/CHANGELOG.md"
 
 [dependency-groups]
 docs = [
@@ -30,27 +39,22 @@ docs = [
   "setuptools>=61.0",
 ]
 test = ["pytest>=8.3.3", "pytest-cov>=6.1.1"]
+bench = ["jax>=0.6.2", "matplotlib>=3.10", "optimistix>=0.0.11"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-# addopts = "-ra -q"
+addopts = "--doctest-modules"
 log_cli = true
 log_level = "INFO"
 log_format = "%(asctime)s - %(name)-8s - %(levelname)s - %(message)s"
 log_date_format = "%Y-%m-%d %H:%M:%S"
-testpaths = ["tests"]
+testpaths = ["tests", "src"]
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-# [build-system]
-# requires = ["setuptools>=61.0", "wheel"]
-# build-backend = "setuptools.build_meta"
-# backend-path = "."
-
-[semantic_release]
-version_variable = ["lumafit/__init__.py:__version__"]
-version_toml = ["pyproject.toml:project.version:nf"]
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
 major_on_zero = false
 branch = "main"
-build_command = "curl -LsSf https://astral.sh/uv/install.sh | sh && source $HOME/.local/bin/env && uv build"
+
+[build-system]
+requires = ["uv_build >= 0.8.0, <1.0.0"]
+build-backend = "uv_build"

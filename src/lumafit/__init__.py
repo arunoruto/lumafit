@@ -9,13 +9,14 @@ pixel-wise fitting in 3D image data.
 """
 
 from collections.abc import Callable
+from importlib.metadata import version
 from typing import Literal
 
 import numpy as np
 import numpy.typing as npt
 from numba import jit, prange
 
-__version__ = "0.2.3"
+__version__ = version(__package__) if __package__ else "0.0.0"
 # Define epsilon near machine precision for numerical stability
 _EPS = np.finfo(float).eps
 LAMBDA_DEFAULT = 1e-2
