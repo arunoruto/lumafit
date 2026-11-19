@@ -69,7 +69,7 @@
           pyprojectOverrides = final: prev: {
             # Implement build fixups here.
             numba = prev.numba.overrideAttrs (old: {
-              buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.tbb_2021_11 ];
+              buildInputs = (old.buildInputs or [ ]) ++ [ pkgs.tbb ];
             });
 
           };
