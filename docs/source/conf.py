@@ -79,8 +79,9 @@ myst_enable_extensions = [
 # This makes `MyClass` equivalent to :py:obj:`MyClass`
 # default_role = 'py:obj'
 
-# Bibtex configuration
-# The path to your bibliography file(s), relative to the source directory
+# Literature: {cite:p}`key` in a page or docstring, listed once in
+# references.md. refs.bib is exported from the carrel project "lumafit":
+#   carrel bib --project lumafit > docs/source/refs.bib
 bibtex_bibfiles = ["refs.bib"]
 bibtex_default_style = "unsrt"
 bibtex_reference_style = "author_year"
@@ -134,41 +135,22 @@ inheritance_alias = {}
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = "pydata_sphinx_theme"
-html_css_files = []
-# html_show_sourcelink = True
-html_context = dict(
-    github_user="arunoruto",
-    github_repo="lumafit",
-    github_version="main",
-    doc_path="docs/source/",
-)
-
-# Customize theme options here (examples)
-# html_theme_options = {
-#     "sidebar_hide_name": False,
-#     "navigation_depth": 4,
-#     "analytics": {
-#         "google_analytics_id": "G-XXXXXXXXXX",
-#     },
-#     "repository_url": "https://github.com/your_username/lumafit", # Update this
-#     "use_repository_button": True,
-#     "use_issues_button": True,
-#     "use_edit_page_button": True,
-# }
-
-# PyData Theme Options
+html_theme = "shibuya"
+html_title = "lumafit"
+html_logo = "../../.github/logo.png"
+html_favicon = "../../.github/logo.png"
+# The repository link and "Edit this page".
+html_context = {
+    "source_type": "github",
+    "source_user": "arunoruto",
+    "source_repo": "lumafit",
+    "source_version": "main",
+    "source_docs_path": "/docs/source/",
+}
 html_theme_options = {
-    "github_url": f"https://github.com/{html_context['github_user']}/{html_context['github_repo']}",
-    # "navigation_depth": 4,
-    # "analytics": {
-    #     "google_analytics_id": "G-XXXXXXXXXX",  # Update this
-    # },
-    # "repository_url": "https://github.com/arunoruto/lumafit",
-    # "use_repository_button": True,
-    # "use_issues_button": True,
-    "use_edit_page_button": True,
-    # "show_toc_level": 2,
+    "github_url": "https://github.com/arunoruto/lumafit",
+    # The blue of the logo.
+    "accent_color": "blue",
 }
 
 # The name of the Pygments (syntax highlighting) style to use.

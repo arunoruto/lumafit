@@ -49,7 +49,7 @@ def decay_jac(p, *args):
 
 @jit(nopython=True, cache=True)
 def polarization(p, *args):
-    """Lunar polarization phase curve: p0*sin(a)^p1*cos(a/2)^p2*sin(a-p3)."""
+    """Polarization phase curve of Lumme & Muinonen (1993): p0*sin(a)^p1*cos(a/2)^p2*sin(a-p3)."""
     a = args[0] * np.pi / 180.0
     return (
         p[0]

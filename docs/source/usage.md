@@ -43,7 +43,8 @@ p_fit, cov, chi2, n_iter, converged = levenberg_marquardt_core(
 ```
 
 `cov` is $(J^T W J)^{-1}$. If `weights` are inverse variances it is the
-parameter covariance; for an unweighted fit scale it by the reduced chi-squared:
+parameter covariance; for an unweighted fit scale it by the reduced chi-squared
+{cite:p}`gavin2020levenberg`:
 
 ```python
 sigma = np.sqrt(np.diag(cov) * chi2 / (y.size - p_fit.size))
@@ -86,8 +87,9 @@ levenberg_marquardt_core(decay, p0, y, weights=1 / sigma**2, args=(t,))
 
 ## Analytical Jacobian
 
-By default the Jacobian is approximated with forward differences, costing one
-model evaluation per parameter and iteration. If you can write it down, pass it
+By default the Jacobian is approximated with forward differences
+{cite:p}`nocedal2006numerical`, costing one model evaluation per parameter and
+iteration. If you can write it down, pass it
 as `jac_func`; it takes the same arguments as the model and returns an array of
 shape `(samples, parameters)`:
 
@@ -111,7 +113,7 @@ levenberg_marquardt_core(decay, p0, y, jac_func=decay_jac, args=(t,))
 ## Minimizing residuals directly
 
 Without `target_y`, the output of the function is taken as the residual vector,
-as in {py:func}`scipy.optimize.least_squares`:
+as in {py:func}`scipy.optimize.least_squares` {cite:p}`virtanen2020scipy`:
 
 ```python
 @njit
@@ -137,4 +139,6 @@ damping $\lambda$ is adapted from the ratio of the actual to the predicted
 decrease of $\chi^2$ {cite:p}`nielsen1999damping`. A fit has converged when the
 gradient, the relative parameter change or the relative decrease of $\chi^2$
 falls below `tol_g`, `tol_p` or `tol_c`. See
-{cite:t}`nocedal2006numerical` and {cite:t}`gavin2020levenberg` for background.
+{cite:t}`nocedal2006numerical` and {cite:t}`gavin2020levenberg` for background,
+and {cite:t}`more1978levenbergmarquardt` for the trust-region formulation used
+by MINPACK.

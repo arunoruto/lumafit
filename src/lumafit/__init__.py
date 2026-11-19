@@ -2,8 +2,10 @@
 Lumafit: A Numba-accelerated Levenberg-Marquardt Fitting Library.
 
 This library provides functions for performing non-linear least squares
-fitting using the Levenberg-Marquardt algorithm, with emphasis on
-performance acceleration via Numba JIT compilation and parallel execution.
+fitting using the Levenberg-Marquardt algorithm
+:cite:p:`levenberg1944method,marquardt1963algorithm`, with emphasis on
+performance acceleration via Numba :cite:p:`lam2015numba` JIT compilation
+and parallel execution.
 It is particularly suited for fitting large numbers of curves, such as
 pixel-wise fitting in 3D image data.
 """
@@ -42,7 +44,9 @@ def _finite_difference_jacobian(
     """
     Approximate the model Jacobian with forward differences.
 
-    Costs one model evaluation per parameter.
+    Costs one model evaluation per parameter. The default step is close
+    to the square root of the machine precision, which balances
+    truncation against rounding error :cite:p:`nocedal2006numerical`.
 
     Parameters
     ----------
@@ -141,8 +145,9 @@ def levenberg_marquardt_core(
         `_finite_difference_jacobian`. Unused if `jac_func` is given.
     use_marquardt_damping : bool, default True
         Damp with ``lambda * diag(J^T W J)``, which makes the step
-        invariant to the scale of the parameters. If False, damp with
-        ``lambda * I`` (Levenberg).
+        invariant to the scale of the parameters
+        :cite:p:`marquardt1963algorithm`. If False, damp with
+        ``lambda * I`` :cite:p:`levenberg1944method`.
     jac_func : callable, optional
         Analytical Jacobian ``J = jac_func(p, *args)`` returning a
         float64 array of shape ``(m, n)``; a Numba nopython function
@@ -182,13 +187,13 @@ def levenberg_marquardt_core(
     chi-squared, the damping then shrinks by up to a factor of 3
     depending on how well the quadratic model predicted the decrease,
     and it grows by 2, 4, 8, ... on consecutive rejected steps. For
-    background see :cite:p:`levenberg1944method`,
-    :cite:p:`marquardt1963algorithm`, :cite:p:`nocedal2006numerical`
-    and :cite:p:`gavin2020levenberg`.
+    background see :cite:t:`nocedal2006numerical` and
+    :cite:t:`gavin2020levenberg`; :cite:t:`more1978levenbergmarquardt`
+    describes the trust-region variant implemented in MINPACK.
 
     `cov_p` is the parameter covariance if `weights` are inverse
     variances. For an unweighted fit, multiply it by the reduced
-    chi-squared ``chi2 / (m - n)``. When the fit stops on `tol_p` or
+    chi-squared ``chi2 / (m - n)`` :cite:p:`gavin2020levenberg`. When the fit stops on `tol_p` or
     `tol_c`, `cov_p` is evaluated one (tiny) step before `p_fit`, which
     saves a Jacobian evaluation.
 

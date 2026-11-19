@@ -3,12 +3,12 @@
 How long does it take to fit every pixel of a 128 × 128 image cube?
 
 ```{image} benchmarks/benchmark-light.svg
-:class: only-light
+:class: light-only
 :alt: Time per fit for lumafit, SciPy and optimistix
 ```
 
 ```{image} benchmarks/benchmark-dark.svg
-:class: only-dark
+:class: dark-only
 :alt: Time per fit for lumafit, SciPy and optimistix
 ```
 
@@ -23,23 +23,30 @@ Two models with four parameters each, sampled at 100 points per pixel:
 
 - **Double exponential decay**, $p_0 e^{-t/p_1} + p_2 e^{-t/p_3}$
 - **Polarization phase curve**,
-  $p_0 \sin^{p_1}\!\alpha \, \cos^{p_2}(\alpha/2) \, \sin(\alpha - p_3)$
+  $p_0 \sin^{p_1}\!\alpha \, \cos^{p_2}(\alpha/2) \, \sin(\alpha - p_3)$,
+  the trigonometric function of {cite:t}`lumme1993twoparameter` that is widely
+  used for the polarization of asteroids and comets
+  {cite:p}`penttila2005statistical`
 
 Every pixel has its own true parameters (±10 % around a common value) plus
 Gaussian noise, and all solvers start from the same initial guess and use their
 default tolerances.
 
-- **SciPy** is {py:func}`scipy.optimize.least_squares` with `method="lm"`
-  (MINPACK), called once per pixel from a Python loop on a plain NumPy model.
-- **optimistix** is `optimistix.LevenbergMarquardt` under {py:func}`jax.vmap`
-  on the CPU, in double precision. It could not be tested on a GPU here.
+- **SciPy** {cite:p}`virtanen2020scipy` is
+  {py:func}`scipy.optimize.least_squares` with `method="lm"`, which wraps the
+  MINPACK implementation {cite:p}`more1978levenbergmarquardt`. It is called
+  once per pixel from a Python loop on a plain NumPy {cite:p}`harris2020array`
+  model.
+- **optimistix** {cite:p}`rader2024optimistix` is
+  `optimistix.LevenbergMarquardt` under `jax.vmap` {cite:p}`bradbury2018jax` on
+  the CPU, in double precision. It could not be tested on a GPU here.
 - **lumafit 0.2.3** is the previous release from PyPI, run with the same
   dependency versions.
 
 Times are the best of three runs after a warm-up call. The warm-up is reported
 separately as *first-call JIT*: lumafit compiles the solver for each new model
-once per process, which takes around ten seconds and is the price for the speed
-afterwards. If you only fit a few hundred curves, SciPy finishes first.
+once per process with Numba {cite:p}`lam2015numba`, which takes around ten
+seconds and is the price for the speed afterwards. If you only fit a few hundred curves, SciPy finishes first.
 
 All solvers land on the same minimum; the last column is the median relative
 difference of the fitted parameters to SciPy's.
