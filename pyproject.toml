@@ -20,6 +20,10 @@ dependencies = [
   "scipy>=1.15.3", # Numba needs SciPy's BLAS/LAPACK for np.linalg and `@`
 ]
 
+[project.optional-dependencies]
+# Fits on any GPU with a Vulkan driver; numba-vulkan needs Python 3.11+.
+vulkan = ["numba-vulkan>=0.1.2; python_version >= '3.11'"]
+
 [project.urls]
 Documentation = "https://arunoruto.github.io/lumafit/"
 Repository = "https://github.com/arunoruto/lumafit"
@@ -39,7 +43,12 @@ docs = [
   "setuptools>=61.0",
 ]
 test = ["pytest>=8.3.3", "pytest-cov>=6.1.1"]
-bench = ["jax>=0.6.2", "matplotlib>=3.10", "optimistix>=0.0.11"]
+bench = [
+  "jax>=0.6.2",
+  "matplotlib>=3.10",
+  "numba-vulkan>=0.1.2; python_version >= '3.11'",
+  "optimistix>=0.0.11",
+]
 
 [tool.pytest.ini_options]
 minversion = "8.0"

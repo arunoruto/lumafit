@@ -17,6 +17,13 @@ import numpy as np
 import numpy.typing as npt
 from numba import jit, prange
 
+from lumafit.pointwise import make_pixelwise_fitter
+
+__all__ = [
+    "levenberg_marquardt_core",
+    "levenberg_marquardt_pixelwise",
+    "make_pixelwise_fitter",
+]
 __version__ = version(__package__) if __package__ else "0.0.0"
 
 _EPS = np.finfo(float).eps
