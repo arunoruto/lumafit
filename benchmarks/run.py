@@ -24,7 +24,7 @@ import scipy
 from numba import jit, njit
 from scipy.optimize import least_squares
 
-from lumafit import levenberg_marquardt_pixelwise, make_pixelwise_fitter
+from lumafit import fit_cube, fit_cube_pointwise
 
 OUT = Path(__file__).parent / "results.json"
 SCIPY = "SciPy least_squares, Python loop"
@@ -33,15 +33,13 @@ M = 100  # samples per pixel
 
 # --- models (same two as the test suite) ------------------------------------
 @jit(nopython=True, cache=True)
-def decay(p, *args):
+def decay(p, t):
     """Double exponential decay: p0*exp(-t/p1) + p2*exp(-t/p3)."""
-    t = args[0]
     return p[0] * np.exp(-t / p[1]) + p[2] * np.exp(-t / p[3])
 
 
 @jit(nopython=True, cache=True)
-def decay_jac(p, *args):
-    t = args[0]
+def decay_jac(p, t):
     J = np.empty((t.shape[0], 4))
     e1 = np.exp(-t / p[1])
     e2 = np.exp(-t / p[3])
@@ -53,9 +51,9 @@ def decay_jac(p, *args):
 
 
 @jit(nopython=True, cache=True)
-def polarization(p, *args):
+def polarization(p, t):
     """Polarization phase curve of Lumme & Muinonen (1993): p0*sin(a)^p1*cos(a/2)^p2*sin(a-p3)."""
-    a = args[0] * np.pi / 180.0
+    a = t * np.pi / 180.0
     return (
         p[0]
         * np.sin(a) ** p[1]
@@ -141,9 +139,7 @@ def run_scipy(prob, Y):
 
 def run_lumafit(prob, Y, threads, jac=None, repeat=3):
     numba.set_num_threads(threads)
-    fit = lambda: levenberg_marquardt_pixelwise(  # noqa: E731
-        prob["model"], prob["p0"], Y, jac_func=jac, args_for_each_pixel=(prob["t"],)
-    )
+    fit = lambda: fit_cube(prob["model"], prob["p0"], Y, jac=jac, args=(prob["t"],))  # noqa: E731
     (p, _, _, n_iter, conv), best, first = best_of(fit, repeat)
     return (
         p.reshape(-1, 4),
@@ -157,10 +153,13 @@ def run_lumafit(prob, Y, threads, jac=None, repeat=3):
 def run_pointwise(name, prob, Y, dtype, target, device=None, threads=None, repeat=3):
     if threads:
         numba.set_num_threads(threads)
-    fit = make_pixelwise_fitter(pointwise_model(name, dtype), 4, dtype, target)
+    model = pointwise_model(name, dtype)
     Y = Y.astype(dtype)  # like the other solvers, timed on arrays of its own dtype
     (p, _, _, n_iter, conv), best, first = best_of(
-        lambda: fit(prob["p0"], Y, prob["t"], device=device), repeat
+        lambda: fit_cube_pointwise(
+            model, prob["p0"], Y, prob["t"], target=target, device=device
+        ),
+        repeat,
     )
     return (
         p.reshape(-1, 4),

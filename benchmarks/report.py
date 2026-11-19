@@ -50,7 +50,11 @@ THEMES = {
 
 
 def load():
-    """Merge all result files; the default ``results.json`` is the current run."""
+    """Merge all result files; the default ``results.json`` is the current run.
+
+    ``results-0.2.3.json`` was recorded with an earlier version of ``run.py``
+    that spoke the 0.2.3 API.
+    """
     current = json.loads((HERE / "results.json").read_text())
     rows = list(current["rows"])
     for path in sorted(HERE.glob("results-*.json")):

@@ -44,8 +44,8 @@ included.
   the CPU, in double precision. It could not be tested on a GPU here.
 - **optimistix on CUDA** is the same code on the GPU, in double and in single
   precision.
-- **lumafit, array model** is {py:func}`lumafit.levenberg_marquardt_pixelwise`.
-- **lumafit, pointwise** is {py:func}`lumafit.make_pixelwise_fitter` on the CPU
+- **lumafit, array model** is {py:func}`lumafit.fit_cube`.
+- **lumafit, pointwise** is {py:func}`lumafit.fit_cube_pointwise` on the CPU
   threads or, as **Vulkan on ...**, on a GPU through numba-vulkan
   {cite:p}`arnaut2026numbavulkan`. The integrated Intel GPU was only run in
   single precision.
@@ -82,7 +82,7 @@ the GPU in `float64` is no faster than 16 CPU threads, and the choice is
 between double precision and a run that is about 20 times shorter.
 
 The integrated Intel GPU comes close to the 16 CPU threads in single precision:
-it is as fast for the decay and 1.6 times slower for the polarization curve.
+it is as fast for the decay and 1.5 times slower for the polarization curve.
 That is the point of the Vulkan target; it runs wherever there is a Vulkan
 driver.
 

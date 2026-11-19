@@ -74,16 +74,16 @@ interpreter; `lumafit` implements the Levenberg-Marquardt algorithm in
 [Numba](https://numba.pydata.org/), compiles it together with your model and
 runs the fits on all cores, or on a GPU.
 
-- `levenberg_marquardt_core` fits a single curve.
-- `levenberg_marquardt_pixelwise` fits every pixel of a
-  `(rows, cols, samples)` cube in parallel and skips pixels masked with NaN.
+- `fit_curve` fits a single curve.
+- `fit_cube` fits every pixel of a `(rows, cols, samples)` cube in parallel and
+  skips pixels masked with NaN.
 - Weighted least squares, returning the covariance matrix of the parameters.
 - Finite difference Jacobian by default, analytical Jacobian if you have one.
-- The solver is a nopython function, so it can be called from your own
+- `fit_curve` is a nopython function, so it can be called from your own
   Numba-compiled code.
-- `make_pixelwise_fitter` runs the same fit for a pointwise model, on the CPU
-  or, through [numba-vulkan](https://github.com/arunoruto/numba-vulkan), on any
-  GPU with a Vulkan driver.
+- `fit_cube_pointwise` runs the same fit for a pointwise model, on the CPU or,
+  through [numba-vulkan](https://github.com/arunoruto/numba-vulkan), on any GPU
+  with a Vulkan driver.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -139,19 +139,18 @@ pip install .
 
 ## Usage
 
-The model is called as `func(p, *args)` and has to be a Numba nopython
-function **defined with `*args`**. Whatever you pass as `args` to the solver
-arrives there, typically the independent variable.
+The model is a Numba nopython function. It takes the parameters first,
+followed by whatever you pass as `args` to the solver, typically the
+independent variable.
 
 ```python
 import numpy as np
 from numba import njit
-from lumafit import levenberg_marquardt_core, levenberg_marquardt_pixelwise
+from lumafit import fit_curve, fit_cube
 
 
 @njit
-def decay(p, *args):
-    t = args[0]
+def decay(p, t):
     return p[0] * np.exp(-t / p[1]) + p[2] * np.exp(-t / p[3])
 
 
@@ -166,9 +165,8 @@ rng = np.random.default_rng(0)
 ```python
 y = decay(p_true, t) + rng.normal(0, 0.02, t.shape)
 
-p_fit, cov, chi2, n_iter, converged = levenberg_marquardt_core(
-    decay, p0, y, args=(t,)
-)
+result = fit_curve(decay, p0, y, args=(t,))
+result.p, result.cov, result.chi2, result.n_iter, result.converged
 ```
 
 ### Fitting pixel-wise on 3D data
@@ -177,12 +175,12 @@ p_fit, cov, chi2, n_iter, converged = levenberg_marquardt_core(
 cube = decay(p_true, t) + rng.normal(0, 0.02, (128, 128, t.size))
 cube[0, 0, :] = np.nan  # masked pixels are skipped
 
-p, cov, chi2, n_iter, converged = levenberg_marquardt_pixelwise(
-    decay, p0, cube, args_for_each_pixel=(t,)
-)
+result = fit_cube(decay, p0, cube, args=(t,))
 
-p.shape           # (128, 128, 4)
-converged.mean()  # fraction of pixels that converged
+result.p.shape           # (128, 128, 4)
+result.converged.mean()  # fraction of pixels that converged
+
+p, cov, chi2, n_iter, converged = result  # a named tuple, so it also unpacks
 ```
 
 The first call compiles the solver for your model, which takes around ten
@@ -190,13 +188,13 @@ seconds; after that the 16,384 fits above run in about 0.15 s on 16 threads.
 
 ### Fitting on a GPU
 
-`make_pixelwise_fitter` takes a model that computes one sample at a time. It
+`fit_cube_pointwise` takes a model that computes one sample at a time. It
 compiles in about two seconds and runs on the CPU threads or on a Vulkan
 device:
 
 ```python
 import math
-from lumafit import make_pixelwise_fitter
+from lumafit import fit_cube_pointwise
 
 
 @njit
@@ -204,15 +202,16 @@ def decay_point(p, t):
     return p[0] * math.exp(-t / p[1]) + p[2] * math.exp(-t / p[3])
 
 
-fit = make_pixelwise_fitter(decay_point, 4, dtype=np.float32, target="vulkan")
-p, cov, chi2, n_iter, converged = fit(p0, cube, t)
+result = fit_cube_pointwise(
+    decay_point, p0, cube, t, target="vulkan", dtype=np.float32
+)
 ```
 
 On an NVIDIA TITAN X the same 16,384 fits take 9 ms in `float32`, where the
-results agree with `float64` to about 1e-4. Use `target="cpu"` to run it
-without a GPU.
+results agree with `float64` to about 1e-4. Leave out `target` to run it on the
+CPU.
 
-Weights (`1 / sigma**2`), an analytical Jacobian (`jac_func`) and minimizing a
+Weights (`1 / sigma**2`), an analytical Jacobian (`jac`) and minimizing a
 residual function directly are covered in the
 [Documentation](https://arunoruto.github.io/lumafit/usage.html).
 
@@ -228,21 +227,21 @@ CPU's integrated Intel UHD 630, NumPy arrays in and out:
 
 | Solver                                           | Exponential decay | Polarization curve |
 | ------------------------------------------------ | ----------------: | -----------------: |
-| `scipy.optimize.least_squares`, loop             |            891 µs |            1038 µs |
-| `optimistix` + `jax.vmap`, CPU                   |            206 µs |             451 µs |
-| `optimistix` + `jax.vmap`, CUDA on TITAN X       |           26.5 µs |            56.5 µs |
+| `scipy.optimize.least_squares`, loop             |            840 µs |             984 µs |
+| `optimistix` + `jax.vmap`, CPU                   |            205 µs |             451 µs |
+| `optimistix` + `jax.vmap`, CUDA on TITAN X       |           26.4 µs |            56.5 µs |
 | `optimistix` + `jax.vmap`, CUDA on TITAN X, f32  |            9.5 µs |            16.6 µs |
 | lumafit 0.2.3, 16 threads                        |           15.4 µs |            32.3 µs |
-| **lumafit, array model, 16 threads**             |            8.4 µs |            21.0 µs |
-| **lumafit, pointwise, 16 threads**               |            7.2 µs |            22.8 µs |
-| **lumafit, pointwise, 16 threads, f32**          |            3.2 µs |             9.2 µs |
-| **lumafit, pointwise, Vulkan on UHD 630, f32**   |            3.3 µs |            14.5 µs |
-| **lumafit, pointwise, Vulkan on TITAN X**        |            2.8 µs |            19.9 µs |
-| **lumafit, pointwise, Vulkan on TITAN X, f32**   |           0.53 µs |             1.1 µs |
+| **`fit_cube`, 16 threads**                       |            8.4 µs |            21.9 µs |
+| **`fit_cube_pointwise`, 16 threads**             |            7.0 µs |            22.3 µs |
+| **`fit_cube_pointwise`, 16 threads, f32**        |            3.1 µs |             9.5 µs |
+| **`fit_cube_pointwise`, Vulkan on UHD 630, f32** |            3.4 µs |            14.5 µs |
+| **`fit_cube_pointwise`, Vulkan on TITAN X**      |            2.8 µs |            19.7 µs |
+| **`fit_cube_pointwise`, Vulkan on TITAN X, f32** |           0.51 µs |             1.1 µs |
 
 All solvers find the same minimum: the fitted parameters agree to 1e-7 or better
 in double precision and to about 1e-4 in single precision (f32). The one-off
-compilation (about ten seconds for an array model, two for a pointwise one) is
+compilation (about ten seconds for `fit_cube`, two for `fit_cube_pointwise`) is
 not included, so for a few hundred curves SciPy is still the quicker choice.
 Methodology and the full table are in the
 [benchmark docs](https://arunoruto.github.io/lumafit/benchmarks.html); to
