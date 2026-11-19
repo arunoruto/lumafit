@@ -1,6 +1,10 @@
 {
   "meta": {
     "label": "lumafit (this version)",
+    "gpus": [
+      "Intel UHD Graphics 630",
+      "NVIDIA TITAN X"
+    ],
     "pixels": 16384,
     "samples_per_pixel": 100,
     "parameters": 4,
@@ -9,14 +13,17 @@
     "python": "3.12.7",
     "numpy": "2.5.5",
     "numba": "0.68.1",
-    "scipy": "1.18.1"
+    "scipy": "1.18.1",
+    "jax": "0.12.1",
+    "optimistix": "0.1.0",
+    "numba-vulkan": "0.1.2"
   },
   "rows": [
     {
       "problem": "decay",
-      "solver": "scipy least_squares (lm), loop",
-      "seconds": 13.970159231990692,
-      "us_per_fit": 852.6708515619318,
+      "solver": "SciPy least_squares, Python loop",
+      "seconds": 14.601691770993057,
+      "us_per_fit": 891.2165387569005,
       "jit_seconds": null,
       "mean_iterations": null,
       "converged": null,
@@ -24,49 +31,119 @@
     },
     {
       "problem": "decay",
-      "solver": "lumafit (this version), 1 thread",
-      "seconds": 0.8259311879955931,
-      "us_per_fit": 50.41083911105915,
-      "jit_seconds": 13.747762617000262,
+      "solver": "lumafit (this version), array model, 1 thread",
+      "seconds": 0.8201395080104703,
+      "us_per_fit": 50.05734301821718,
+      "jit_seconds": 13.897356928981026,
       "mean_iterations": 5.581787109375,
       "converged": 1.0,
       "median_rel_diff_vs_scipy": 1.5224162660875662e-08
     },
     {
       "problem": "decay",
-      "solver": "lumafit (this version), 16 threads",
-      "seconds": 0.1384367860009661,
-      "us_per_fit": 8.449510864316778,
-      "jit_seconds": 0.003727921997779049,
+      "solver": "lumafit (this version), array model, 16 threads",
+      "seconds": 0.13696176699886564,
+      "us_per_fit": 8.359482849051858,
+      "jit_seconds": 0.0019107139960397035,
       "mean_iterations": 5.581787109375,
       "converged": 1.0,
       "median_rel_diff_vs_scipy": 1.5224162660875662e-08
     },
     {
       "problem": "decay",
-      "solver": "lumafit (this version), 16 threads, analytic J",
-      "seconds": 0.11163739098992664,
-      "us_per_fit": 6.813805602412515,
-      "jit_seconds": 9.317946373019367,
+      "solver": "lumafit (this version), array model, 16 threads, analytic J",
+      "seconds": 0.11533982199034654,
+      "us_per_fit": 7.039784057027987,
+      "jit_seconds": 9.01636121502088,
       "mean_iterations": 5.581787109375,
       "converged": 1.0,
       "median_rel_diff_vs_scipy": 1.5177927654948776e-08
     },
     {
       "problem": "decay",
-      "solver": "optimistix LM + jax.vmap (CPU)",
-      "seconds": 3.364550551006687,
-      "us_per_fit": 205.35586859171673,
-      "jit_seconds": 0.4931775659933919,
+      "solver": "lumafit (this version), pointwise, 16 threads",
+      "seconds": 0.11801652199937962,
+      "us_per_fit": 7.2031568603136975,
+      "jit_seconds": 2.0589880990009988,
+      "mean_iterations": 5.5189208984375,
+      "converged": 1.0,
+      "median_rel_diff_vs_scipy": 1.899965574644634e-08
+    },
+    {
+      "problem": "decay",
+      "solver": "lumafit (this version), pointwise, 16 threads, float32",
+      "seconds": 0.052203439990989864,
+      "us_per_fit": 3.186245116637565,
+      "jit_seconds": 1.961937663014396,
+      "mean_iterations": 3.64141845703125,
+      "converged": 0.99981689453125,
+      "median_rel_diff_vs_scipy": 4.762254048950702e-05
+    },
+    {
+      "problem": "decay",
+      "solver": "lumafit (this version), pointwise, Vulkan on NVIDIA TITAN X",
+      "seconds": 0.0456414989894256,
+      "us_per_fit": 2.7857360223038086,
+      "jit_seconds": 0.7999572190165054,
+      "mean_iterations": 5.5189208984375,
+      "converged": 1.0,
+      "median_rel_diff_vs_scipy": 1.8962235107209652e-08
+    },
+    {
+      "problem": "decay",
+      "solver": "lumafit (this version), pointwise, Vulkan on NVIDIA TITAN X, float32",
+      "seconds": 0.008671413001138717,
+      "us_per_fit": 0.529261047432783,
+      "jit_seconds": 0.5930448279978009,
+      "mean_iterations": 3.64117431640625,
+      "converged": 1.0,
+      "median_rel_diff_vs_scipy": 4.809880250296525e-05
+    },
+    {
+      "problem": "decay",
+      "solver": "lumafit (this version), pointwise, Vulkan on Intel UHD Graphics 630, float32",
+      "seconds": 0.05453464700258337,
+      "us_per_fit": 3.32853070084127,
+      "jit_seconds": 0.7147883129946422,
+      "mean_iterations": 3.6397705078125,
+      "converged": 0.99993896484375,
+      "median_rel_diff_vs_scipy": 4.7859927654188664e-05
+    },
+    {
+      "problem": "decay",
+      "solver": "optimistix + jax.vmap, CPU",
+      "seconds": 3.3709921230038162,
+      "us_per_fit": 205.74903094505714,
+      "jit_seconds": 0.4962648660002742,
       "mean_iterations": null,
       "converged": null,
       "median_rel_diff_vs_scipy": 3.5990204164243774e-09
     },
     {
+      "problem": "decay",
+      "solver": "optimistix + jax.vmap, CUDA on NVIDIA TITAN X",
+      "seconds": 0.4334731679991819,
+      "us_per_fit": 26.457102539012567,
+      "jit_seconds": 0.6843547860044055,
+      "mean_iterations": null,
+      "converged": null,
+      "median_rel_diff_vs_scipy": 3.593269025471074e-09
+    },
+    {
+      "problem": "decay",
+      "solver": "optimistix + jax.vmap, CUDA on NVIDIA TITAN X, float32",
+      "seconds": 0.15562245401088148,
+      "us_per_fit": 9.49844079656259,
+      "jit_seconds": 0.5350120259827236,
+      "mean_iterations": null,
+      "converged": null,
+      "median_rel_diff_vs_scipy": 5.147409225053814e-06
+    },
+    {
       "problem": "polarization",
-      "solver": "scipy least_squares (lm), loop",
-      "seconds": 16.261693410007865,
-      "us_per_fit": 992.5349981694253,
+      "solver": "SciPy least_squares, Python loop",
+      "seconds": 16.999317143010558,
+      "us_per_fit": 1037.555977966953,
       "jit_seconds": null,
       "mean_iterations": null,
       "converged": null,
@@ -74,33 +151,103 @@
     },
     {
       "problem": "polarization",
-      "solver": "lumafit (this version), 1 thread",
-      "seconds": 2.5894370510068256,
-      "us_per_fit": 158.04669500774082,
-      "jit_seconds": 8.937206100992626,
+      "solver": "lumafit (this version), array model, 1 thread",
+      "seconds": 2.612093638002989,
+      "us_per_fit": 159.42954333514336,
+      "jit_seconds": 8.852004277985543,
       "mean_iterations": 6.0994873046875,
       "converged": 1.0,
       "median_rel_diff_vs_scipy": 5.3667247016375426e-08
     },
     {
       "problem": "polarization",
-      "solver": "lumafit (this version), 16 threads",
-      "seconds": 0.3526190859993221,
-      "us_per_fit": 21.522161010700813,
-      "jit_seconds": -0.0016321569855790585,
+      "solver": "lumafit (this version), array model, 16 threads",
+      "seconds": 0.34441980700648855,
+      "us_per_fit": 21.021716736235874,
+      "jit_seconds": -0.0031629450095351785,
       "mean_iterations": 6.0994873046875,
       "converged": 1.0,
       "median_rel_diff_vs_scipy": 5.3667247016375426e-08
     },
     {
       "problem": "polarization",
-      "solver": "optimistix LM + jax.vmap (CPU)",
-      "seconds": 7.392243212001631,
-      "us_per_fit": 451.1867194825214,
-      "jit_seconds": 0.5890013089956483,
+      "solver": "lumafit (this version), pointwise, 16 threads",
+      "seconds": 0.37380257798940875,
+      "us_per_fit": 22.815098754236374,
+      "jit_seconds": 2.0823274580034195,
+      "mean_iterations": 6.0655517578125,
+      "converged": 1.0,
+      "median_rel_diff_vs_scipy": 5.766152944311307e-08
+    },
+    {
+      "problem": "polarization",
+      "solver": "lumafit (this version), pointwise, 16 threads, float32",
+      "seconds": 0.15132059798634145,
+      "us_per_fit": 9.235876341939786,
+      "jit_seconds": 1.8038933720235946,
+      "mean_iterations": 3.958740234375,
+      "converged": 1.0,
+      "median_rel_diff_vs_scipy": 0.00018835517768792798
+    },
+    {
+      "problem": "polarization",
+      "solver": "lumafit (this version), pointwise, Vulkan on NVIDIA TITAN X",
+      "seconds": 0.32598670199513435,
+      "us_per_fit": 19.896649291695212,
+      "jit_seconds": 0.7550799330056179,
+      "mean_iterations": 6.06573486328125,
+      "converged": 1.0,
+      "median_rel_diff_vs_scipy": 5.769750006109051e-08
+    },
+    {
+      "problem": "polarization",
+      "solver": "lumafit (this version), pointwise, Vulkan on NVIDIA TITAN X, float32",
+      "seconds": 0.017595145996892825,
+      "us_per_fit": 1.0739224851619156,
+      "jit_seconds": 0.8176861590036424,
+      "mean_iterations": 3.9588623046875,
+      "converged": 1.0,
+      "median_rel_diff_vs_scipy": 0.00018800707188155623
+    },
+    {
+      "problem": "polarization",
+      "solver": "lumafit (this version), pointwise, Vulkan on Intel UHD Graphics 630, float32",
+      "seconds": 0.23685502700391226,
+      "us_per_fit": 14.456483581781754,
+      "jit_seconds": 0.6743562539923005,
+      "mean_iterations": 3.959228515625,
+      "converged": 1.0,
+      "median_rel_diff_vs_scipy": 0.0001895879548672391
+    },
+    {
+      "problem": "polarization",
+      "solver": "optimistix + jax.vmap, CPU",
+      "seconds": 7.388157030000002,
+      "us_per_fit": 450.93731872558607,
+      "jit_seconds": 0.5760042280016933,
       "mean_iterations": null,
       "converged": null,
-      "median_rel_diff_vs_scipy": 1.571356379125978e-08
+      "median_rel_diff_vs_scipy": 1.5722971420745808e-08
+    },
+    {
+      "problem": "polarization",
+      "solver": "optimistix + jax.vmap, CUDA on NVIDIA TITAN X",
+      "seconds": 0.9253582219971577,
+      "us_per_fit": 56.479383666818705,
+      "jit_seconds": 0.7429892939981073,
+      "mean_iterations": null,
+      "converged": null,
+      "median_rel_diff_vs_scipy": 1.5719992424429074e-08
+    },
+    {
+      "problem": "polarization",
+      "solver": "optimistix + jax.vmap, CUDA on NVIDIA TITAN X, float32",
+      "seconds": 0.27260117200785317,
+      "us_per_fit": 16.638255127432444,
+      "jit_seconds": 0.5831545469845878,
+      "mean_iterations": null,
+      "converged": null,
+      "median_rel_diff_vs_scipy": 2.580540029557718e-06
     }
   ]
 }

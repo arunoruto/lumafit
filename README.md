@@ -64,15 +64,15 @@
 
 ## About The Project
 
-![Time per fit for lumafit, SciPy and optimistix][benchmark-light]
-![Time per fit for lumafit, SciPy and optimistix][benchmark-dark]
+![Time per fit for lumafit, SciPy and optimistix on CPU and GPU][benchmark-light]
+![Time per fit for lumafit, SciPy and optimistix on CPU and GPU][benchmark-dark]
 
 `lumafit` fits many small non-linear least squares problems at once, such as
 one curve along the third dimension for every pixel of an image cube. Calling
 `scipy.optimize.least_squares` in a Python loop spends most of its time in the
 interpreter; `lumafit` implements the Levenberg-Marquardt algorithm in
 [Numba](https://numba.pydata.org/), compiles it together with your model and
-runs the fits on all cores.
+runs the fits on all cores, or on a GPU.
 
 - `levenberg_marquardt_core` fits a single curve.
 - `levenberg_marquardt_pixelwise` fits every pixel of a
@@ -81,6 +81,9 @@ runs the fits on all cores.
 - Finite difference Jacobian by default, analytical Jacobian if you have one.
 - The solver is a nopython function, so it can be called from your own
   Numba-compiled code.
+- `make_pixelwise_fitter` runs the same fit for a pointwise model, on the CPU
+  or, through [numba-vulkan](https://github.com/arunoruto/numba-vulkan), on any
+  GPU with a Vulkan driver.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -90,6 +93,7 @@ runs the fits on all cores.
 - [![Numba][Numba-shield]][Numba-url]
 - [![NumPy][NumPy-shield]][NumPy-url]
 - [![SciPy][SciPy-shield]][SciPy-url]
+- [![Vulkan][Vulkan-shield]][Vulkan-url] (optional, through numba-vulkan)
 - [![uv][uv-shield]][uv-url]
 - [![Nix][Nix-shield]][Nix-url]
 
@@ -112,6 +116,13 @@ From [PyPI][pypi-url]:
 pip install lumafit
 # or
 uv add lumafit
+```
+
+With GPU support (Python 3.11 or newer, a Vulkan loader and a driver for your
+GPU):
+
+```sh
+pip install "lumafit[vulkan]"
 ```
 
 From source:
@@ -177,6 +188,30 @@ converged.mean()  # fraction of pixels that converged
 The first call compiles the solver for your model, which takes around ten
 seconds; after that the 16,384 fits above run in about 0.15 s on 16 threads.
 
+### Fitting on a GPU
+
+`make_pixelwise_fitter` takes a model that computes one sample at a time. It
+compiles in about two seconds and runs on the CPU threads or on a Vulkan
+device:
+
+```python
+import math
+from lumafit import make_pixelwise_fitter
+
+
+@njit
+def decay_point(p, t):
+    return p[0] * math.exp(-t / p[1]) + p[2] * math.exp(-t / p[3])
+
+
+fit = make_pixelwise_fitter(decay_point, 4, dtype=np.float32, target="vulkan")
+p, cov, chi2, n_iter, converged = fit(p0, cube, t)
+```
+
+On an NVIDIA TITAN X the same 16,384 fits take 9 ms in `float32`, where the
+results agree with `float64` to about 1e-4. Use `target="cpu"` to run it
+without a GPU.
+
 Weights (`1 / sigma**2`), an analytical Jacobian (`jac_func`) and minimizing a
 residual function directly are covered in the
 [Documentation](https://arunoruto.github.io/lumafit/usage.html).
@@ -188,21 +223,28 @@ residual function directly are covered in the
 ## Performance
 
 Time per fit for a 128 × 128 cube with 100 samples per pixel and 4 parameters,
-on an Intel Core i9-9900K (8 cores, 16 threads):
+on an Intel Core i9-9900K (8 cores, 16 threads) with an NVIDIA TITAN X and the
+CPU's integrated Intel UHD 630, NumPy arrays in and out:
 
-| Solver                                    | Exponential decay | Polarization curve |
-| ----------------------------------------- | ----------------: | -----------------: |
-| `scipy.optimize.least_squares`, loop      |            853 µs |             993 µs |
-| `optimistix.LevenbergMarquardt` + `vmap`  |            205 µs |             451 µs |
-| lumafit 0.2.3, 16 threads                 |           15.4 µs |            32.3 µs |
-| **lumafit, 1 thread**                     |           50.4 µs |             158 µs |
-| **lumafit, 16 threads**                   |            8.4 µs |            21.5 µs |
-| **lumafit, 16 threads, analytic Jacobian** |            6.8 µs |                  – |
+| Solver                                           | Exponential decay | Polarization curve |
+| ------------------------------------------------ | ----------------: | -----------------: |
+| `scipy.optimize.least_squares`, loop             |            891 µs |            1038 µs |
+| `optimistix` + `jax.vmap`, CPU                   |            206 µs |             451 µs |
+| `optimistix` + `jax.vmap`, CUDA on TITAN X       |           26.5 µs |            56.5 µs |
+| `optimistix` + `jax.vmap`, CUDA on TITAN X, f32  |            9.5 µs |            16.6 µs |
+| lumafit 0.2.3, 16 threads                        |           15.4 µs |            32.3 µs |
+| **lumafit, array model, 16 threads**             |            8.4 µs |            21.0 µs |
+| **lumafit, pointwise, 16 threads**               |            7.2 µs |            22.8 µs |
+| **lumafit, pointwise, 16 threads, f32**          |            3.2 µs |             9.2 µs |
+| **lumafit, pointwise, Vulkan on UHD 630, f32**   |            3.3 µs |            14.5 µs |
+| **lumafit, pointwise, Vulkan on TITAN X**        |            2.8 µs |            19.9 µs |
+| **lumafit, pointwise, Vulkan on TITAN X, f32**   |           0.53 µs |             1.1 µs |
 
-All solvers find the same minimum (fitted parameters agree to 1e-7 or better).
-The one-off compilation of about ten seconds per model is not included, so for a
-few hundred curves SciPy is still the quicker choice. Methodology and the full
-table are in the
+All solvers find the same minimum: the fitted parameters agree to 1e-7 or better
+in double precision and to about 1e-4 in single precision (f32). The one-off
+compilation (about ten seconds for an array model, two for a pointwise one) is
+not included, so for a few hundred curves SciPy is still the quicker choice.
+Methodology and the full table are in the
 [benchmark docs](https://arunoruto.github.io/lumafit/benchmarks.html); to
 reproduce:
 
@@ -245,6 +287,7 @@ nix develop .#uv2nix
 - [x] Nielsen's damping strategy.
 - [x] Documentation and examples.
 - [x] Publish on PyPI.
+- [x] Run on GPUs, through Vulkan.
 - [ ] Implement parameter bounds.
 - [ ] Improve robustness for ill-conditioned problems.
 
@@ -327,6 +370,8 @@ Project Link: [https://github.com/arunoruto/lumafit](https://github.com/arunorut
 [NumPy-url]: https://numpy.org/
 [SciPy-shield]: https://img.shields.io/badge/SciPy-8CAAE6?style=for-the-badge&logo=scipy&logoColor=white
 [SciPy-url]: https://scipy.org/
+[Vulkan-shield]: https://img.shields.io/badge/Vulkan-AC162C?style=for-the-badge&logo=vulkan&logoColor=white
+[Vulkan-url]: https://github.com/arunoruto/numba-vulkan
 [uv-shield]: https://img.shields.io/badge/uv-DE5FE9?style=for-the-badge&logo=uv&logoColor=white
 [uv-url]: https://docs.astral.sh/uv/
 [Nix-shield]: https://img.shields.io/badge/Nix-5277C3?style=for-the-badge&logo=nixos&logoColor=white

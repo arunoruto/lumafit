@@ -125,6 +125,79 @@ def residuals(p, *args):
 levenberg_marquardt_core(residuals, np.array([1.0, 1.0]), args=(t, y))
 ```
 
+## Pointwise models and GPUs
+
+{py:func}`lumafit.make_pixelwise_fitter` is a second solver for image cubes.
+Its model computes **one sample at a time** instead of a whole curve:
+
+```python
+import math
+from lumafit import make_pixelwise_fitter
+
+
+@njit
+def decay_point(p, t):
+    return p[0] * math.exp(-t / p[1]) + p[2] * math.exp(-t / p[3])
+
+
+fit = make_pixelwise_fitter(decay_point, n_params=4)
+p, cov, chi2, n_iter, converged = fit(p0, cube, t)
+```
+
+The algorithm and the results are the same, but nothing in it allocates memory
+while it runs. It therefore compiles in about two seconds instead of ten, is a
+little faster on the CPU, and can run on a GPU.
+
+### On a GPU
+
+With [numba-vulkan](https://github.com/arunoruto/numba-vulkan)
+{cite:p}`arnaut2026numbavulkan` the same fit runs on any GPU that has a Vulkan
+driver, whether it is from NVIDIA, AMD, Intel or Apple:
+
+```bash
+pip install "lumafit[vulkan]"
+```
+
+```python
+fit = make_pixelwise_fitter(decay_point, 4, dtype=np.float32, target="vulkan")
+p, cov, chi2, n_iter, converged = fit(p0, cube, t)             # first discrete GPU
+p, cov, chi2, n_iter, converged = fit(p0, cube, t, device="intel")  # by name or index
+```
+
+Arrays go in and come out as NumPy arrays; the copies to and from the device
+are part of the call. See [](benchmarks.md) for what to expect.
+
+### float32
+
+Most GPUs compute several times faster in `float32` than in `float64`, and some
+have no `float64` at all. `dtype=np.float32` runs the whole fit in single
+precision, on the CPU as well. Two things change:
+
+- The fitted parameters agree with a `float64` fit to about 1e-4, because the
+  finite difference Jacobian and the convergence tests are limited by the
+  precision. The tolerances default to the square root of the machine
+  precision of `dtype`.
+- Every operation in the model has to stay in `float32`. A Python literal
+  promotes the expression to `float64`, which numba-vulkan reports with a
+  warning. Use typed constants:
+
+  ```python
+  HALF = np.float32(0.5)
+
+
+  @njit
+  def model(p, t):
+      return p[0] * math.cos(HALF * t)  # not: 0.5 * t
+  ```
+
+### Differences to the array solver
+
+- The model signature is `model(p, x)`, where `x` is one entry of the
+  independent variable (`t[k]`, or a row of it if `t` is 2D).
+- There is no `jac_func`; the Jacobian always comes from forward differences.
+- Damping is always Marquardt's.
+- `n_iter` is `int32` and all floating point results have the chosen `dtype`.
+
 ## Algorithm
 
 The solver is a damped Gauss-Newton iteration

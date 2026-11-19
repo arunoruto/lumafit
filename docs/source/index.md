@@ -10,6 +10,9 @@ image cube.
   threads, see [](benchmarks.md).
 - **Small**: two functions, {py:func}`lumafit.levenberg_marquardt_core` for a
   single curve and {py:func}`lumafit.levenberg_marquardt_pixelwise` for a cube.
+- **On GPUs too**: with a pointwise model the same fit runs on any GPU with a
+  Vulkan driver through numba-vulkan {cite:p}`arnaut2026numbavulkan`, see
+  [](usage.md).
 - **Callable from compiled code**: the solver is a nopython function, so it can
   be used inside your own Numba-compiled loops.
 

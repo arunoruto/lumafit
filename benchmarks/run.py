@@ -1,15 +1,19 @@
-"""Pixel-wise fitting benchmark: lumafit vs SciPy (and optimistix, if installed).
+"""Pixel-wise fitting benchmark: lumafit vs SciPy and optimistix, on CPU and GPU.
 
 Fits every pixel of a synthetic image cube with each solver and writes the
 timings to a JSON file, which ``benchmarks/report.py`` turns into the table and
-figure shown in the docs.
+figure shown in the docs. Every timing is end to end: NumPy arrays in, NumPy
+arrays out. Solvers whose packages or devices are missing are skipped.
 
     uv run --group bench python benchmarks/run.py
     uv run --group bench python benchmarks/report.py
+
+For the JAX GPU rows, add ``--with "jax[cuda12]"`` to the first command.
 """
 
 import argparse
 import json
+import math
 import platform
 import time
 from pathlib import Path
@@ -17,12 +21,13 @@ from pathlib import Path
 import numba
 import numpy as np
 import scipy
-from numba import jit
+from numba import jit, njit
 from scipy.optimize import least_squares
 
-from lumafit import levenberg_marquardt_pixelwise
+from lumafit import levenberg_marquardt_pixelwise, make_pixelwise_fitter
 
 OUT = Path(__file__).parent / "results.json"
+SCIPY = "SciPy least_squares, Python loop"
 M = 100  # samples per pixel
 
 
@@ -79,6 +84,27 @@ PROBLEMS = {
 }
 
 
+def pointwise_model(name, F):
+    """The same models, one sample at a time, with constants typed as `F`."""
+    DEG, HALF = F(np.pi / 180), F(0.5)
+
+    @njit
+    def decay_pt(p, t):
+        return p[0] * math.exp(-t / p[1]) + p[2] * math.exp(-t / p[3])
+
+    @njit
+    def polarization_pt(p, t):
+        a = t * DEG
+        return (
+            p[0]
+            * math.sin(a) ** p[1]
+            * math.cos(a * HALF) ** p[2]
+            * math.sin(a - p[3] * DEG)
+        )
+
+    return {"decay": decay_pt, "polarization": polarization_pt}[name]
+
+
 def make_cube(prob, side, seed=0):
     """Image cube where every pixel has its own true parameters (+-10 %)."""
     rng = np.random.default_rng(seed)
@@ -128,39 +154,79 @@ def run_lumafit(prob, Y, threads, jac=None, repeat=3):
     )
 
 
-def run_optimistix(prob, Y, repeat=3):
+def run_pointwise(name, prob, Y, dtype, target, device=None, threads=None, repeat=3):
+    if threads:
+        numba.set_num_threads(threads)
+    fit = make_pixelwise_fitter(pointwise_model(name, dtype), 4, dtype, target)
+    Y = Y.astype(dtype)  # like the other solvers, timed on arrays of its own dtype
+    (p, _, _, n_iter, conv), best, first = best_of(
+        lambda: fit(prob["p0"], Y, prob["t"], device=device), repeat
+    )
+    return (
+        p.reshape(-1, 4),
+        best,
+        first - best,
+        float(n_iter.mean()),
+        float(conv.mean()),
+    )
+
+
+def run_optimistix(prob, Y, dtype, device, repeat=3):
     import jax
 
-    jax.config.update("jax_enable_x64", True)
+    jax.config.update("jax_enable_x64", dtype == np.float64)
     import jax.numpy as jnp
     import optimistix as optx
 
-    t = jnp.asarray(prob["t"])
-    if prob is PROBLEMS["decay"]:
-        f = lambda p: p[0] * jnp.exp(-t / p[1]) + p[2] * jnp.exp(-t / p[3])  # noqa: E731
-    else:
-        a = t * jnp.pi / 180.0
-        f = lambda p: (  # noqa: E731
-            p[0]
-            * jnp.sin(a) ** p[1]
-            * jnp.cos(a / 2) ** p[2]
-            * jnp.sin(a - p[3] * jnp.pi / 180.0)
-        )
-    solver = optx.LevenbergMarquardt(rtol=1e-8, atol=1e-8)
-    p0 = jnp.asarray(prob["p0"])
+    tol = 1e-8 if dtype == np.float64 else math.sqrt(np.finfo(dtype).eps)
+    solver = optx.LevenbergMarquardt(rtol=tol, atol=tol)
+    Y = Y.reshape(-1, M).astype(dtype)
+    with jax.default_device(device):
+        t = jnp.asarray(prob["t"], dtype)
+        p0 = jnp.asarray(prob["p0"], dtype)
+        if prob is PROBLEMS["decay"]:
+            f = lambda p: p[0] * jnp.exp(-t / p[1]) + p[2] * jnp.exp(-t / p[3])  # noqa: E731
+        else:
+            a = t * (jnp.pi / 180.0)
+            f = lambda p: (  # noqa: E731
+                p[0] * jnp.sin(a) ** p[1] * jnp.cos(a / 2) ** p[2]
+                * jnp.sin(a - p[3] * (jnp.pi / 180.0))
+            )  # fmt: skip
 
-    @jax.jit
-    def fit_all(Yb):
-        def one(y):
-            return optx.least_squares(
-                lambda p, y: f(p) - y, solver, p0, args=y, max_steps=256, throw=False
-            ).value
+        @jax.jit
+        def fit_all(Yb):
+            def one(y):
+                return optx.least_squares(
+                    lambda p, y: f(p) - y,
+                    solver,
+                    p0,
+                    args=y,
+                    max_steps=256,
+                    throw=False,
+                ).value
 
-        return jax.vmap(one)(Yb)
+            return jax.vmap(one)(Yb)
 
-    Yj = jnp.asarray(Y.reshape(-1, M))
-    p, best, first = best_of(lambda: fit_all(Yj).block_until_ready(), repeat)
-    return np.asarray(p), best, first - best
+        p, best, first = best_of(lambda: np.asarray(fit_all(jnp.asarray(Y))), repeat)
+    return p, best, first - best
+
+
+def short(device_name):
+    """'Intel(R) UHD Graphics 630 (CFL GT2)' -> 'Intel UHD Graphics 630'."""
+    return device_name.replace("(R)", "").split(" (")[0].strip()
+
+
+def versions(*packages):
+    """Installed versions of the optional packages, for the report."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    out = {}
+    for package in packages:
+        try:
+            out[package] = version(package)
+        except PackageNotFoundError:
+            pass
+    return out
 
 
 def cpu_name():
@@ -187,6 +253,7 @@ def main():
 
     n_threads = numba.get_num_threads()
     rows = []
+    gpus = set()
     for name, prob in PROBLEMS.items():
         Y = make_cube(prob, a.side)
         n_px = a.side**2
@@ -224,33 +291,87 @@ def main():
                 )
             )
 
+        def timed(solver, run, *args, **kwargs):
+            """Run one solver and record it; a missing package or device skips it."""
+            try:
+                out = run(*args, **kwargs)
+            except ImportError as exc:
+                print(f"skipping {solver}: {exc}")
+                return None
+            add(solver, *out, ref=ref)  # noqa: B023 (ref is read at call time on purpose)
+            return out[0]
+
         ref = None
         if not a.only_lumafit:
-            ref, s = run_scipy(prob, Y)
-            add("scipy least_squares (lm), loop", ref, s)
+            ref = timed(SCIPY, run_scipy, prob, Y)
         for threads in sorted({1, n_threads}):
-            p, s, j, it, cv = run_lumafit(prob, Y, threads)
-            add(
-                f"{a.label}, {threads} thread{'s' * (threads > 1)}",
-                p,
-                s,
-                j,
-                it,
-                cv,
-                ref,
-            )
+            unit = f"{threads} thread{'s' * (threads > 1)}"
+            timed(f"{a.label}, array model, {unit}", run_lumafit, prob, Y, threads)
         if prob["jac"] is not None:
-            p, s, j, it, cv = run_lumafit(prob, Y, n_threads, prob["jac"])
-            add(f"{a.label}, {n_threads} threads, analytic J", p, s, j, it, cv, ref)
-        if not a.only_lumafit:
+            timed(
+                f"{a.label}, array model, {n_threads} threads, analytic J",
+                run_lumafit, prob, Y, n_threads, prob["jac"],
+            )  # fmt: skip
+        if a.only_lumafit:
+            continue
+
+        pointwise = f"{a.label}, pointwise"
+        for dtype, suffix in ((np.float64, ""), (np.float32, ", float32")):
+            timed(
+                f"{pointwise}, {n_threads} threads{suffix}",
+                run_pointwise, name, prob, Y, dtype, "cpu", threads=n_threads,
+            )  # fmt: skip
+        try:
+            import numba_vulkan as nv
+
+            vulkan_devices = [
+                d for d in nv.list_devices() if d.kind in ("discrete", "integrated")
+            ]
+        except ImportError as exc:
+            print(f"skipping Vulkan: {exc}")
+            vulkan_devices = []
+        for dev in vulkan_devices:
+            gpus.add(short(dev.name))
+            if dev.kind == "discrete" and dev.float64:
+                timed(
+                    f"{pointwise}, Vulkan on {short(dev.name)}",
+                    run_pointwise, name, prob, Y, np.float64, "vulkan", dev.index,
+                )  # fmt: skip
+            timed(
+                f"{pointwise}, Vulkan on {short(dev.name)}, float32",
+                run_pointwise, name, prob, Y, np.float32, "vulkan", dev.index,
+            )  # fmt: skip
+
+        try:
+            import jax
+
+            jax_devices = [("CPU", jax.devices("cpu")[0])]
             try:
-                p, s, j = run_optimistix(prob, Y)
-                add("optimistix LM + jax.vmap (CPU)", p, s, j, ref=ref)
-            except ImportError:
-                print("optimistix not installed, skipping")
+                gpu = jax.devices("gpu")[0]
+                jax_devices.append((f"CUDA on {short(gpu.device_kind)}", gpu))
+            except RuntimeError:
+                print("skipping JAX on the GPU: no CUDA-enabled jaxlib")
+        except ImportError as exc:
+            print(f"skipping optimistix: {exc}")
+            jax_devices = []
+        for where, device in jax_devices:
+            timed(
+                f"optimistix + jax.vmap, {where}",
+                run_optimistix,
+                prob,
+                Y,
+                np.float64,
+                device,
+            )
+            if where != "CPU":
+                timed(
+                    f"optimistix + jax.vmap, {where}, float32",
+                    run_optimistix, prob, Y, np.float32, device,
+                )  # fmt: skip
 
     meta = dict(
         label=a.label,
+        gpus=sorted(gpus),
         pixels=a.side**2,
         samples_per_pixel=M,
         parameters=4,
@@ -260,6 +381,7 @@ def main():
         numpy=np.__version__,
         numba=numba.__version__,
         scipy=scipy.__version__,
+        **versions("jax", "optimistix", "numba-vulkan"),
     )
     a.out.write_text(json.dumps(dict(meta=meta, rows=rows), indent=2) + "\n")
     print(f"wrote {a.out}")
