@@ -19,9 +19,22 @@ TITLES = {
     "polarization": "Polarization phase curve",
 }
 # Emphasis palette: the current lumafit in the accent hue, everything else gray.
+# Each figure carries its own surface so it stays readable on any page background.
 THEMES = {
-    "light": dict(text="#0b0b0b", muted="#52514e", accent="#2a78d6", other="#c3c2b7"),
-    "dark": dict(text="#f0efec", muted="#c3c2b7", accent="#3987e5", other="#52514e"),
+    "light": dict(
+        surface="#fcfcfb",
+        text="#0b0b0b",
+        muted="#52514e",
+        accent="#2a78d6",
+        other="#c3c2b7",
+    ),
+    "dark": dict(
+        surface="#1a1a19",
+        text="#f0efec",
+        muted="#c3c2b7",
+        accent="#3987e5",
+        other="#52514e",
+    ),
 }
 
 
@@ -105,6 +118,7 @@ def figure(meta, problems, theme, path):
                 color=c["text"],
             )
         ax.set_yticks(list(y), [r["solver"] for r in rows], fontsize=9, color=c["text"])
+        ax.set_facecolor(c["surface"])
         ax.set_title(
             TITLES[name], loc="left", fontsize=11, color=c["text"], fontweight="bold"
         )
@@ -118,7 +132,7 @@ def figure(meta, problems, theme, path):
         "time per fit in µs (lower is better)", fontsize=9, color=c["muted"]
     )
     fig.tight_layout()
-    fig.savefig(path, transparent=True)
+    fig.savefig(path, facecolor=c["surface"])
     plt.close(fig)
 
 

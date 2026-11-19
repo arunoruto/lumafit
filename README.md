@@ -64,10 +64,8 @@
 
 ## About The Project
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/source/benchmarks/benchmark-dark.svg">
-  <img src="docs/source/benchmarks/benchmark-light.svg" alt="Time per fit for lumafit, SciPy and optimistix">
-</picture>
+![Time per fit for lumafit, SciPy and optimistix][benchmark-light]
+![Time per fit for lumafit, SciPy and optimistix][benchmark-dark]
 
 `lumafit` fits many small non-linear least squares problems at once, such as
 one curve along the third dimension for every pixel of an image cube. Calling
@@ -307,6 +305,8 @@ Project Link: [https://github.com/arunoruto/lumafit](https://github.com/arunorut
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
 
+[benchmark-light]: docs/source/benchmarks/benchmark-light.svg#gh-light-mode-only
+[benchmark-dark]: docs/source/benchmarks/benchmark-dark.svg#gh-dark-mode-only
 [pypi-shield]: https://img.shields.io/pypi/v/lumafit.svg?style=for-the-badge
 [pypi-url]: https://pypi.org/project/lumafit/
 [contributors-shield]: https://img.shields.io/github/contributors/arunoruto/lumafit.svg?style=for-the-badge
