@@ -26,7 +26,7 @@ def model_exponential_decay(p, *args):
     Parameters p: [Amplitude1, DecayConstant1, Amplitude2, DecayConstant2]
     """
     # Assuming `t` is the first element in `args`
-    t: npt.NDArray[np.float64] = args[0]  # Explicitly hint type for Numba
+    t: np.typing.NDArray[np.float64] = args[0]  # Explicitly hint type for Numba
 
     term1 = np.zeros_like(t, dtype=np.float64)
     if (
@@ -47,7 +47,7 @@ def model_polarization(p, *args):
     Parameters p: [Amplitude, Exponent1, Exponent2, PhaseInDegrees]
     """
     # Assuming `t` is the first element in `args`
-    t: npt.NDArray[np.float64] = args[0]  # Explicitly hint type for Numba
+    t: np.typing.NDArray[np.float64] = args[0]  # Explicitly hint type for Numba
 
     t_rad = t * np.pi / 180.0
     p3_rad = p[3] * np.pi / 180.0
@@ -83,7 +83,7 @@ def analytic_jacobian_exp_decay(p, *args):
     J[i, j] = d(model_exponential_decay(p, t)) / d(p[j])
     """
     # Assuming `t` is the first element in `args`
-    t: npt.NDArray[np.float64] = args[0]  # Explicitly hint type for Numba
+    t: np.typing.NDArray[np.float64] = args[0]  # Explicitly hint type for Numba
 
     m = t.shape[0]
     n = p.shape[0]
@@ -129,7 +129,7 @@ def analytic_jacobian_polarization(p, *args):
     J[i, j] = d(model_polarization(p, t)) / d(p[j])
     """
     # Assuming `t` is the first element in `args`
-    t: npt.NDArray[np.float64] = args[0]  # Explicitly hint type for Numba
+    t: np.typing.NDArray[np.float64] = args[0]  # Explicitly hint type for Numba
 
     m = t.shape[0]
     n = p.shape[0]
@@ -458,7 +458,7 @@ def test_singular_jacobian_case():
     @jit(nopython=True, cache=True, fastmath=True)  # Added fastmath
     def model_constant(p, *args):
         # Assuming `t` is the first element in `args`
-        t: npt.NDArray[np.float64] = args[0]  # Explicitly hint type for Numba
+        t: np.typing.NDArray[np.float64] = args[0]  # Explicitly hint type for Numba
         return np.full_like(t, p[0], dtype=np.float64)
 
     t_data = np.array([1.0, 2.0, 3.0], dtype=np.float64)
