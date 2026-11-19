@@ -697,3 +697,84 @@ def test_analytic_jacobian_vs_fd_vs_scipy(data_fixture_name, request):
         atol=param_atol_fd_comparisons,
         err_msg=f"{d['model'].__name__}: LMba FD vs SciPy Analytic param mismatch",
     )
+
+
+# --- Regression tests ---
+
+
+def _noisy_decay(d, noise_std=0.05, seed=3):
+    rng = np.random.default_rng(seed)
+    return d["y_clean"] + rng.normal(0, noise_std, d["y_clean"].shape)
+
+
+def test_fd_covariance_matches_analytic(exp_decay_data_dict):
+    """The finite difference Jacobian must be scaled like the analytic one."""
+    d = exp_decay_data_dict
+    y, p0, args = _noisy_decay(d), d["p_true"] * 0.9, (d["t"],)
+
+    p_fd, cov_fd, *_ = levenberg_marquardt_core(d["model"], p0, y, args=args)
+    p_an, cov_an, *_ = levenberg_marquardt_core(
+        d["model"], p0, y, jac_func=d["jac_analytic"], args=args
+    )
+
+    npt.assert_allclose(p_fd, p_an, rtol=1e-6)
+    npt.assert_allclose(cov_fd, cov_an, rtol=1e-4)
+
+
+def test_weighted_fit_matches_scipy_tightly(exp_decay_data_dict):
+    """Weights are 1/sigma**2, in the step and in the returned chi-squared."""
+    d = exp_decay_data_dict
+    y, p0, t = _noisy_decay(d), d["p_true"] * 0.9, d["t"]
+    w = np.linspace(1.0, 100.0, y.shape[0])
+
+    p_fit, _, chi2, _, conv = levenberg_marquardt_core(
+        d["model"], p0, y, weights=w, args=(t,)
+    )
+    ref = least_squares(
+        lambda p: np.sqrt(w) * (d["model"](p, t) - y), p0, method="lm", xtol=1e-12
+    )
+
+    assert conv
+    npt.assert_allclose(p_fit, ref.x, rtol=1e-5)
+    npt.assert_allclose(chi2, np.sum(ref.fun**2), rtol=1e-8)
+
+
+def test_residual_function_without_target(exp_decay_data_dict):
+    """With no target, the function output is minimized as residuals."""
+    d = exp_decay_data_dict
+    y, p0, t = _noisy_decay(d), d["p_true"] * 0.9, d["t"]
+
+    @jit(nopython=True)
+    def residuals(p, *args):
+        return model_exponential_decay(p, args[0]) - args[1]
+
+    p_res, *_ = levenberg_marquardt_core(residuals, p0, args=(t, y))
+    p_fit, *_ = levenberg_marquardt_core(d["model"], p0, y, args=(t,))
+
+    npt.assert_allclose(p_res, p_fit, rtol=1e-6)
+
+
+def test_pixelwise_skips_nan_pixels(exp_decay_data_dict):
+    """Masked pixels stay NaN/unconverged, the others are still fitted."""
+    d = exp_decay_data_dict
+    cube = np.tile(_noisy_decay(d), (2, 2, 1))
+    cube[0, 1, 5] = np.nan
+
+    p, cov, chi2, n_iter, conv = levenberg_marquardt_pixelwise(
+        d["model"], d["p_true"] * 0.9, cube, args_for_each_pixel=(d["t"],)
+    )
+
+    assert np.isnan(p[0, 1]).all() and np.isnan(cov[0, 1]).all()
+    assert np.isnan(chi2[0, 1]) and n_iter[0, 1] == 0 and not conv[0, 1]
+    assert conv.sum() == 3
+    npt.assert_allclose(p[1, 1], d["p_true"], rtol=0.1)
+    npt.assert_array_equal(p[1, 1], p[0, 0])  # same curve, same fit
+
+
+def test_converges_in_few_iterations(exp_decay_data_dict):
+    """Guards the damping strategy: this fit takes MINPACK about 6 steps."""
+    d = exp_decay_data_dict
+    *_, n_iter, conv = levenberg_marquardt_core(
+        d["model"], d["p_true"] * 0.9, _noisy_decay(d), args=(d["t"],)
+    )
+    assert conv and n_iter <= 10
